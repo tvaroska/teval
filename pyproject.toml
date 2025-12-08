@@ -1,0 +1,15 @@
+[project]
+name = "teval"
+version = "0.1.0"
+description = "Trivial LLM eval - as simple as possible"
+readme = "README.md"
+requires-python = ">=3.10,<3.15"
+dependencies = [
+    "pydantic>=2.7.4,<3.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.8.0",
+]
