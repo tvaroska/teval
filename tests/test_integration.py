@@ -9,7 +9,7 @@ try:
 except ImportError:
     GOOGLE_GENAI_AVAILABLE = False
 
-from tevak import EvaluationRubric, MetricDefinition
+from teval import EvaluationRubric, MetricDefinition
 
 
 # Skip all tests in this module if google-genai is not installed
@@ -106,15 +106,15 @@ Include a reasoning field for each metric (metric_id + "_reasoning").
     result = json.loads(response_text)
 
     # Assertions
-    assert "M1" in result
-    assert "C1" in result
-    assert "C2" in result
-    assert isinstance(result["M1"], bool)
-    assert isinstance(result["C1"], bool)
-    assert isinstance(result["C2"], bool)
+    assert "CP" in result
+    assert "CS" in result
+    assert "G" in result
+    assert isinstance(result["CP"], bool)
+    assert isinstance(result["CS"], bool)
+    assert isinstance(result["G"], bool)
 
-    # This should pass since the answer is factually correct
-    assert result["M1"] is True
+    # This should pass since capital letters and punctuation are correct
+    assert result["CP"] is True
     assert passes is True
 
     print(f"\nEvaluation result: {'PASS' if passes else 'FAIL'}")

@@ -1,9 +1,9 @@
-"""Tests for tevak.metrics module."""
+"""Tests for teval.metrics module."""
 
 import pytest
 from pydantic import ValidationError
 
-from tevak import EvaluationRubric, MetricDefinition
+from teval import EvaluationRubric, MetricDefinition
 
 
 class TestMetricDefinition:

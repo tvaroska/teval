@@ -1,8 +1,8 @@
 """Trivial LLM eval - as simple as possible."""
 
-from tevak.metrics import EvaluationRubric, MetricDefinition
+from teval.metrics import EvaluationRubric, MetricDefinition
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "EvaluationRubric",
