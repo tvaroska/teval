@@ -13,3 +13,16 @@ dev = [
     "pytest>=8.0.0",
     "ruff>=0.8.0",
 ]
+integration-tests = [
+    "google-genai>=0.2.0",
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
