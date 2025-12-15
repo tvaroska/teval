@@ -385,3 +385,83 @@ class EvaluationRubric(BaseModel):
                 lines.append(f"  - Still need: {needed} more")
 
         return "\n".join(lines)
+
+    def calculate_alignment(
+        self,
+        results_a: Union[BaseModel, List[BaseModel]],
+        results_b: Union[BaseModel, List[BaseModel]]
+    ) -> float:
+        """
+        Calculate alignment between two sets of evaluation results based on pass/fail agreement.
+
+        Compares whether evaluation results agree on the overall pass/fail outcome.
+        Useful for validating if a cheaper model produces similar decisions to an expensive one,
+        or for checking human-LLM alignment.
+
+        Args:
+            results_a: Single Pydantic model instance or list of instances from to_pydantic_model()
+            results_b: Single Pydantic model instance or list of instances from to_pydantic_model()
+
+        Returns:
+            Float between 0.0 and 1.0:
+            - 1.0 = perfect alignment (all results agree on pass/fail)
+            - 0.0 = no alignment (all results disagree)
+            - For batch: fraction of aligned results (e.g., 0.95 = 95% aligned)
+
+        Raises:
+            TypeError: If inputs are not Pydantic BaseModel instances
+            ValueError: If batch lists have different lengths
+
+        Example:
+            >>> rubric = EvaluationRubric(...)
+            >>> ResultModel = rubric.to_pydantic_model()
+            >>> result_a = ResultModel(M1=True, C1=False)
+            >>> result_b = ResultModel(M1=True, C1=True)
+            >>> alignment = rubric.calculate_alignment(result_a, result_b)
+            >>> print(f"Alignment: {alignment:.1%}")
+        """
+        # Normalize inputs to lists
+        is_single_a = isinstance(results_a, BaseModel)
+        is_single_b = isinstance(results_b, BaseModel)
+
+        if is_single_a != is_single_b:
+            raise TypeError("Both results_a and results_b must be either single instances or lists")
+
+        # Convert to lists for uniform processing
+        if is_single_a:
+            results_a = [results_a]
+            results_b = [results_b]
+        else:
+            # Validate they are lists
+            if not isinstance(results_a, list) or not isinstance(results_b, list):
+                raise TypeError("results_a and results_b must be BaseModel instances or lists of BaseModel instances")
+
+        # Validate list lengths match
+        if len(results_a) != len(results_b):
+            raise ValueError(
+                f"Results lists must have the same length. "
+                f"Got {len(results_a)} for results_a and {len(results_b)} for results_b"
+            )
+
+        # Validate all items are BaseModel instances
+        for i, (item_a, item_b) in enumerate(zip(results_a, results_b)):
+            if not isinstance(item_a, BaseModel):
+                raise TypeError(f"results_a[{i}] is not a BaseModel instance")
+            if not isinstance(item_b, BaseModel):
+                raise TypeError(f"results_b[{i}] is not a BaseModel instance")
+
+        # Handle empty lists
+        if len(results_a) == 0:
+            return 1.0
+
+        # Calculate alignment
+        aligned_count = 0
+        for item_a, item_b in zip(results_a, results_b):
+            # Check if both have passes() method
+            if not hasattr(item_a, 'passes') or not hasattr(item_b, 'passes'):
+                raise TypeError("Results must be instances from to_pydantic_model() with passes() method")
+
+            if item_a.passes() == item_b.passes():
+                aligned_count += 1
+
+        return aligned_count / len(results_a)
