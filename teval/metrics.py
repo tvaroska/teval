@@ -196,12 +196,12 @@ class EvaluationRubric(BaseModel):
             """Returns list of metric IDs that passed (returned True)."""
             return [metric.id for metric in rubric_ref.metrics if getattr(model_self, metric.id)]
 
-        def to_report(model_self) -> str:
+        def to_report(model_self, title: Optional[str] = None) -> str:
             """Generates a consolidated text report of the evaluation results."""
             result_dict = {metric.id: getattr(model_self, metric.id) for metric in rubric_ref.metrics}
             reasoning_dict = {metric.id: getattr(model_self, f"{metric.id}_reasoning", None)
                             for metric in rubric_ref.metrics}
-            return rubric_ref.generate_report(result_dict, reasoning_dict)
+            return rubric_ref.generate_report(result_dict, reasoning_dict, title)
 
         # Create the model class dynamically
         model_name = f"EvaluationResult_{self.rubric_id}"
@@ -271,18 +271,19 @@ class EvaluationRubric(BaseModel):
 
         return True
 
-    def generate_report(self, result: Dict[str, Any], reasoning: Optional[Dict[str, Optional[str]]] = None) -> str:
+    def generate_report(self, result: Dict[str, Any], reasoning: Optional[Dict[str, Optional[str]]] = None, title: Optional[str] = None) -> str:
         """
         Generates a consolidated text report of evaluation results.
 
         Args:
             result: Dictionary mapping metric IDs to boolean pass/fail values
             reasoning: Optional dictionary mapping metric IDs to reasoning strings
+            title: Optional custom title for the report. If not provided, uses "Evaluation Report: {rubric_id}"
 
         Returns:
             A formatted text report showing:
             - Overall pass/fail status
-            - All metrics with their pass/fail status
+            - All metrics with their pass/fail status (each as separate paragraph)
             - Reasoning for each metric (if provided)
             - What is required for passing
 
@@ -290,13 +291,14 @@ class EvaluationRubric(BaseModel):
             >>> rubric = EvaluationRubric(...)
             >>> result = {"M1": True, "C1": False, "C2": True}
             >>> reasoning = {"M1": "Code follows style guide", "C1": "Missing tests"}
-            >>> print(rubric.generate_report(result, reasoning))
+            >>> print(rubric.generate_report(result, reasoning, title="My Custom Report"))
         """
         if reasoning is None:
             reasoning = {}
 
         lines = []
-        lines.append(f"# Evaluation Report: {self.rubric_id}")
+        report_title = title if title else f"Evaluation Report: {self.rubric_id}"
+        lines.append(f"# {report_title}")
         lines.append("")
 
         # Determine overall pass/fail
@@ -323,7 +325,9 @@ class EvaluationRubric(BaseModel):
                 metric_reasoning = reasoning.get(metric.id)
                 if metric_reasoning:
                     lines.append(f"  → {metric_reasoning}")
-            lines.append("")
+
+                # Add blank line after each metric to create separate paragraphs
+                lines.append("")
 
             if mandatory_failed:
                 lines.append(f"⚠️  **{len(mandatory_failed)} mandatory metric(s) failed:** {', '.join(mandatory_failed)}")
@@ -348,7 +352,9 @@ class EvaluationRubric(BaseModel):
                 metric_reasoning = reasoning.get(metric.id)
                 if metric_reasoning:
                     lines.append(f"  → {metric_reasoning}")
-            lines.append("")
+
+                # Add blank line after each metric to create separate paragraphs
+                lines.append("")
 
             if cumulative_passed < self.passing_score_threshold:
                 needed = self.passing_score_threshold - cumulative_passed
@@ -357,14 +363,23 @@ class EvaluationRubric(BaseModel):
 
         # Summary
         lines.append("## Requirements for Passing")
-        requirements = []
+        lines.append("")
 
         if self.mandatory_metrics:
-            requirements.append(f"- ALL {len(self.mandatory_metrics)} mandatory criteria must pass")
+            lines.append("**Mandatory criteria (ALL must pass):**")
+            for metric in self.mandatory_metrics:
+                passed = result.get(metric.id, False)
+                status = "✓" if passed else "✗"
+                lines.append(f"  {status} {metric.id}")
+            lines.append("")
 
         if self.cumulative_metrics:
-            requirements.append(f"- At least {self.passing_score_threshold} of {len(self.cumulative_metrics)} cumulative criteria must pass")
-
-        lines.extend(requirements)
+            cumulative_passed = sum(1 for m in self.cumulative_metrics if result.get(m.id, False))
+            lines.append(f"**Cumulative criteria:**")
+            lines.append(f"  - Need at least {self.passing_score_threshold} of {len(self.cumulative_metrics)} to pass")
+            lines.append(f"  - Currently passed: {cumulative_passed}")
+            if cumulative_passed < self.passing_score_threshold:
+                needed = self.passing_score_threshold - cumulative_passed
+                lines.append(f"  - Still need: {needed} more")
 
         return "\n".join(lines)
