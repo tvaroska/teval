@@ -43,12 +43,14 @@ class EvaluationRubric(BaseModel):
         Ensures the passing threshold is not greater than the maximum possible score (total metric count).
         """
         metrics = info.data.get('metrics', [])
-        # Count only non-mandatory (cumulative) metrics
+        # Count mandatory and cumulative metrics
+        mandatory_count = sum(1 for m in metrics if m.mandatory)
         cumulative_count = sum(1 for m in metrics if not m.mandatory)
 
         if threshold > cumulative_count:
             raise ValueError(
-                f"Passing threshold (count: {threshold}) cannot exceed the maximum possible cumulative metric count ({cumulative_count})."
+                f"Passing threshold ({threshold}) cannot exceed the number of cumulative metrics ({cumulative_count}). "
+                f"You have {mandatory_count} mandatory metric(s) and {cumulative_count} cumulative metric(s)."
             )
         return threshold
 
