@@ -1,7 +1,7 @@
 """Tests for teval.metrics module."""
 
 import pytest
-from pydantic import ValidationError
+from pydantic import ValidationError, BaseModel
 
 from teval import EvaluationRubric, MetricDefinition
 
@@ -106,7 +106,7 @@ class TestEvaluationRubric:
     def test_threshold_exceeds_cumulative_count_rejected(self):
         """Test that threshold cannot exceed cumulative metric count."""
         with pytest.raises(
-            ValidationError, match="cannot exceed the maximum possible cumulative"
+            ValidationError, match="cannot exceed the number of cumulative metrics.*1 mandatory metric.*2 cumulative metric"
         ):
             EvaluationRubric(
                 rubric_id="test_v1",
@@ -431,6 +431,158 @@ class TestEvaluationRubric:
         with pytest.raises(ValueError, match="must be a JSON string or dictionary"):
             rubric.validate_result(123)
 
+    def test_generate_report_basic(self):
+        """Test basic report generation with mixed metrics."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Mandatory check", mandatory=True),
+                MetricDefinition(id="C1", rubric="Cumulative check 1"),
+                MetricDefinition(id="C2", rubric="Cumulative check 2"),
+            ],
+            passing_score_threshold=1,
+        )
+
+        result = {"M1": True, "C1": True, "C2": False}
+        report = rubric.generate_report(result)
+
+        # Check basic structure
+        assert "# Evaluation Report: test_v1" in report
+        assert "**Overall Result: PASS**" in report
+        assert "## Mandatory Criteria (ALL must pass)" in report
+        assert "## Cumulative Criteria" in report
+        assert "**Score: 1/2**" in report
+        assert "## Requirements for Passing" in report
+
+    def test_generate_report_with_reasoning(self):
+        """Test report generation includes reasoning."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Test metric", mandatory=True),
+            ],
+            passing_score_threshold=0,
+        )
+
+        result = {"M1": True}
+        reasoning = {"M1": "This is the reason it passed"}
+        report = rubric.generate_report(result, reasoning)
+
+        assert "This is the reason it passed" in report
+        assert "→" in report
+
+    def test_generate_report_custom_title(self):
+        """Test report generation with custom title."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Test", mandatory=True),
+            ],
+            passing_score_threshold=0,
+        )
+
+        result = {"M1": True}
+        report = rubric.generate_report(result, title="My Custom Report")
+
+        assert "# My Custom Report" in report
+        assert "# Evaluation Report: test_v1" not in report
+
+    def test_generate_report_all_pass(self):
+        """Test report when all metrics pass."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Mandatory", mandatory=True),
+                MetricDefinition(id="C1", rubric="Cumulative 1"),
+                MetricDefinition(id="C2", rubric="Cumulative 2"),
+            ],
+            passing_score_threshold=2,
+        )
+
+        result = {"M1": True, "C1": True, "C2": True}
+        report = rubric.generate_report(result)
+
+        assert "**Overall Result: PASS**" in report
+        assert "✓" in report
+        assert "✗" not in report
+        assert "⚠️" not in report
+
+    def test_generate_report_mandatory_fails(self):
+        """Test report shows failed mandatory metrics."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Mandatory 1", mandatory=True),
+                MetricDefinition(id="M2", rubric="Mandatory 2", mandatory=True),
+                MetricDefinition(id="C1", rubric="Cumulative"),
+            ],
+            passing_score_threshold=1,
+        )
+
+        result = {"M1": True, "C1": True, "M2": False}
+        report = rubric.generate_report(result)
+
+        assert "**Overall Result: FAIL**" in report
+        assert "⚠️  **1 mandatory metric(s) failed:** M2" in report
+        assert "✗ **M2** [FAIL]" in report
+
+    def test_generate_report_cumulative_fails(self):
+        """Test report shows cumulative score deficit."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Mandatory", mandatory=True),
+                MetricDefinition(id="C1", rubric="Cumulative 1"),
+                MetricDefinition(id="C2", rubric="Cumulative 2"),
+                MetricDefinition(id="C3", rubric="Cumulative 3"),
+            ],
+            passing_score_threshold=3,
+        )
+
+        result = {"M1": True, "C1": True, "C2": False, "C3": False}
+        report = rubric.generate_report(result)
+
+        assert "**Overall Result: FAIL**" in report
+        assert "**Score: 1/3**" in report
+        assert "⚠️  **Need 2 more cumulative metric(s) to pass**" in report
+        assert "Still need: 2 more" in report
+
+    def test_generate_report_only_mandatory(self):
+        """Test report with only mandatory metrics."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Mandatory 1", mandatory=True),
+                MetricDefinition(id="M2", rubric="Mandatory 2", mandatory=True),
+            ],
+            passing_score_threshold=0,
+        )
+
+        result = {"M1": True, "M2": True}
+        report = rubric.generate_report(result)
+
+        assert "## Mandatory Criteria (ALL must pass)" in report
+        assert "## Cumulative Criteria" not in report
+        assert "**Overall Result: PASS**" in report
+
+    def test_generate_report_only_cumulative(self):
+        """Test report with only cumulative metrics."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="C1", rubric="Cumulative 1"),
+                MetricDefinition(id="C2", rubric="Cumulative 2"),
+            ],
+            passing_score_threshold=1,
+        )
+
+        result = {"C1": True, "C2": False}
+        report = rubric.generate_report(result)
+
+        assert "## Mandatory Criteria" not in report
+        assert "## Cumulative Criteria" in report
+        assert "**Score: 1/2**" in report
+
     def test_to_pydantic_model_basic(self):
         """Test Pydantic model generation."""
         rubric = EvaluationRubric(
@@ -616,3 +768,384 @@ class TestEvaluationRubric:
 
         # Should fail validation (mandatory metric failed)
         assert rubric.validate_result(result_dict2) is False
+
+    def test_pydantic_model_get_failed_metrics(self):
+        """Test get_failed_metrics() helper method."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Mandatory", mandatory=True),
+                MetricDefinition(id="C1", rubric="Cumulative 1"),
+                MetricDefinition(id="C2", rubric="Cumulative 2"),
+            ],
+            passing_score_threshold=1,
+        )
+
+        ResultModel = rubric.to_pydantic_model()
+
+        # Test with some failing
+        result = ResultModel(M1=True, C1=False, C2=False)
+        assert result.get_failed_metrics() == ["C1", "C2"]
+
+        # Test with all passing
+        result2 = ResultModel(M1=True, C1=True, C2=True)
+        assert result2.get_failed_metrics() == []
+
+        # Test with all failing
+        result3 = ResultModel(M1=False, C1=False, C2=False)
+        assert set(result3.get_failed_metrics()) == {"M1", "C1", "C2"}
+
+    def test_pydantic_model_get_passed_metrics(self):
+        """Test get_passed_metrics() helper method."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Mandatory", mandatory=True),
+                MetricDefinition(id="C1", rubric="Cumulative 1"),
+                MetricDefinition(id="C2", rubric="Cumulative 2"),
+            ],
+            passing_score_threshold=1,
+        )
+
+        ResultModel = rubric.to_pydantic_model()
+
+        # Test with some passing
+        result = ResultModel(M1=True, C1=True, C2=False)
+        assert set(result.get_passed_metrics()) == {"M1", "C1"}
+
+        # Test with all passing
+        result2 = ResultModel(M1=True, C1=True, C2=True)
+        assert set(result2.get_passed_metrics()) == {"M1", "C1", "C2"}
+
+        # Test with all failing
+        result3 = ResultModel(M1=False, C1=False, C2=False)
+        assert result3.get_passed_metrics() == []
+
+    def test_pydantic_model_to_report(self):
+        """Test to_report() helper method."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Mandatory check", mandatory=True),
+                MetricDefinition(id="C1", rubric="Cumulative check"),
+            ],
+            passing_score_threshold=1,
+        )
+
+        ResultModel = rubric.to_pydantic_model()
+
+        # Test basic report generation
+        result = ResultModel(M1=True, C1=True)
+        report = result.to_report()
+        assert "# Evaluation Report: test_v1" in report
+        assert "**Overall Result: PASS**" in report
+
+        # Test with custom title
+        report_custom = result.to_report(title="My Custom Title")
+        assert "# My Custom Title" in report_custom
+        assert "# Evaluation Report: test_v1" not in report_custom
+
+        # Test with reasoning fields
+        result_with_reasoning = ResultModel(
+            M1=True,
+            C1=False,
+            M1_reasoning="This passed because...",
+            C1_reasoning="This failed because..."
+        )
+        report_reasoning = result_with_reasoning.to_report()
+        assert "This passed because..." in report_reasoning
+        assert "This failed because..." in report_reasoning
+
+
+class TestAlignmentCalculation:
+    """Tests for calculate_alignment() method."""
+
+    def test_single_result_both_pass(self):
+        """Test alignment when both single results pass."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Mandatory", mandatory=True),
+                MetricDefinition(id="C1", rubric="Cumulative"),
+            ],
+            passing_score_threshold=1,
+        )
+
+        ResultModel = rubric.to_pydantic_model()
+        result_a = ResultModel(M1=True, C1=True)
+        result_b = ResultModel(M1=True, C1=True)
+
+        alignment = rubric.calculate_alignment(result_a, result_b)
+        assert alignment == 1.0
+
+    def test_single_result_both_fail(self):
+        """Test alignment when both single results fail."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Mandatory", mandatory=True),
+                MetricDefinition(id="C1", rubric="Cumulative"),
+            ],
+            passing_score_threshold=1,
+        )
+
+        ResultModel = rubric.to_pydantic_model()
+        result_a = ResultModel(M1=False, C1=False)
+        result_b = ResultModel(M1=False, C1=True)
+
+        alignment = rubric.calculate_alignment(result_a, result_b)
+        assert alignment == 1.0
+
+    def test_single_result_disagree(self):
+        """Test alignment when single results disagree on pass/fail."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Mandatory", mandatory=True),
+                MetricDefinition(id="C1", rubric="Cumulative"),
+            ],
+            passing_score_threshold=1,
+        )
+
+        ResultModel = rubric.to_pydantic_model()
+        result_a = ResultModel(M1=True, C1=True)  # Passes
+        result_b = ResultModel(M1=False, C1=True)  # Fails (mandatory failed)
+
+        alignment = rubric.calculate_alignment(result_a, result_b)
+        assert alignment == 0.0
+
+    def test_batch_all_aligned(self):
+        """Test batch comparison when all results are aligned."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Mandatory", mandatory=True),
+                MetricDefinition(id="C1", rubric="Cumulative"),
+            ],
+            passing_score_threshold=1,
+        )
+
+        ResultModel = rubric.to_pydantic_model()
+        results_a = [
+            ResultModel(M1=True, C1=True),   # Pass
+            ResultModel(M1=False, C1=False), # Fail (mandatory failed)
+            ResultModel(M1=True, C1=True),   # Pass
+        ]
+        results_b = [
+            ResultModel(M1=True, C1=True),   # Pass (aligned)
+            ResultModel(M1=False, C1=True),  # Fail (aligned - mandatory failed)
+            ResultModel(M1=True, C1=True),   # Pass (aligned)
+        ]
+
+        alignment = rubric.calculate_alignment(results_a, results_b)
+        assert alignment == 1.0
+
+    def test_batch_none_aligned(self):
+        """Test batch comparison when no results are aligned."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Mandatory", mandatory=True),
+                MetricDefinition(id="C1", rubric="Cumulative"),
+            ],
+            passing_score_threshold=1,
+        )
+
+        ResultModel = rubric.to_pydantic_model()
+        results_a = [
+            ResultModel(M1=True, C1=True),   # Pass
+            ResultModel(M1=True, C1=True),   # Pass
+        ]
+        results_b = [
+            ResultModel(M1=False, C1=False), # Fail
+            ResultModel(M1=False, C1=True),  # Fail
+        ]
+
+        alignment = rubric.calculate_alignment(results_a, results_b)
+        assert alignment == 0.0
+
+    def test_batch_partial_alignment(self):
+        """Test batch comparison with partial alignment."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Mandatory", mandatory=True),
+                MetricDefinition(id="C1", rubric="Cumulative"),
+            ],
+            passing_score_threshold=0,
+        )
+
+        ResultModel = rubric.to_pydantic_model()
+        results_a = [
+            ResultModel(M1=True, C1=True),   # Pass
+            ResultModel(M1=False, C1=False), # Fail
+            ResultModel(M1=True, C1=True),   # Pass
+            ResultModel(M1=False, C1=False), # Fail
+        ]
+        results_b = [
+            ResultModel(M1=True, C1=False),  # Pass
+            ResultModel(M1=False, C1=True),  # Fail
+            ResultModel(M1=False, C1=False), # Fail (disagree)
+            ResultModel(M1=True, C1=True),   # Pass (disagree)
+        ]
+
+        alignment = rubric.calculate_alignment(results_a, results_b)
+        assert alignment == 0.5  # 2 out of 4 aligned
+
+    def test_batch_75_percent_alignment(self):
+        """Test batch comparison with 75% alignment."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Mandatory", mandatory=True),
+            ],
+            passing_score_threshold=0,
+        )
+
+        ResultModel = rubric.to_pydantic_model()
+        results_a = [
+            ResultModel(M1=True),   # Pass
+            ResultModel(M1=False),  # Fail
+            ResultModel(M1=True),   # Pass
+            ResultModel(M1=False),  # Fail
+        ]
+        results_b = [
+            ResultModel(M1=True),   # Pass (aligned)
+            ResultModel(M1=False),  # Fail (aligned)
+            ResultModel(M1=True),   # Pass (aligned)
+            ResultModel(M1=True),   # Pass (not aligned)
+        ]
+
+        alignment = rubric.calculate_alignment(results_a, results_b)
+        assert alignment == 0.75  # 3 out of 4 aligned
+
+    def test_empty_lists(self):
+        """Test alignment with empty lists."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Test", mandatory=True),
+            ],
+            passing_score_threshold=0,
+        )
+
+        alignment = rubric.calculate_alignment([], [])
+        assert alignment == 1.0
+
+    def test_different_list_lengths_raises_error(self):
+        """Test that different list lengths raise ValueError."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Test", mandatory=True),
+            ],
+            passing_score_threshold=0,
+        )
+
+        ResultModel = rubric.to_pydantic_model()
+        results_a = [ResultModel(M1=True), ResultModel(M1=False)]
+        results_b = [ResultModel(M1=True)]
+
+        with pytest.raises(ValueError, match="must have the same length"):
+            rubric.calculate_alignment(results_a, results_b)
+
+    def test_mixed_single_and_list_raises_error(self):
+        """Test that mixing single instance and list raises TypeError."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Test", mandatory=True),
+            ],
+            passing_score_threshold=0,
+        )
+
+        ResultModel = rubric.to_pydantic_model()
+        result_single = ResultModel(M1=True)
+        results_list = [ResultModel(M1=True)]
+
+        with pytest.raises(TypeError, match="must be either single instances or lists"):
+            rubric.calculate_alignment(result_single, results_list)
+
+    def test_non_basemodel_instance_raises_error(self):
+        """Test that non-BaseModel instances raise TypeError."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Test", mandatory=True),
+            ],
+            passing_score_threshold=0,
+        )
+
+        ResultModel = rubric.to_pydantic_model()
+        result_valid = ResultModel(M1=True)
+
+        # When one is BaseModel and one is dict, it triggers the "single instances or lists" check
+        with pytest.raises(TypeError, match="must be either single instances or lists"):
+            rubric.calculate_alignment(result_valid, {"M1": True})
+
+    def test_non_basemodel_in_list_raises_error(self):
+        """Test that non-BaseModel items in list raise TypeError."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Test", mandatory=True),
+            ],
+            passing_score_threshold=0,
+        )
+
+        ResultModel = rubric.to_pydantic_model()
+        results_a = [ResultModel(M1=True), ResultModel(M1=False)]
+        results_b = [ResultModel(M1=True), {"M1": False}]
+
+        with pytest.raises(TypeError, match="results_b\\[1\\] is not a BaseModel instance"):
+            rubric.calculate_alignment(results_a, results_b)
+
+    def test_non_basemodel_in_results_a_list_raises_error(self):
+        """Test that non-BaseModel items in results_a list raise TypeError."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Test", mandatory=True),
+            ],
+            passing_score_threshold=0,
+        )
+
+        ResultModel = rubric.to_pydantic_model()
+        results_a = [ResultModel(M1=True), {"M1": False}]
+        results_b = [ResultModel(M1=True), ResultModel(M1=False)]
+
+        with pytest.raises(TypeError, match="results_a\\[1\\] is not a BaseModel instance"):
+            rubric.calculate_alignment(results_a, results_b)
+
+    def test_non_list_input_raises_error(self):
+        """Test that non-list inputs (when not single instance) raise TypeError."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Test", mandatory=True),
+            ],
+            passing_score_threshold=0,
+        )
+
+        with pytest.raises(TypeError, match="must be BaseModel instances or lists"):
+            rubric.calculate_alignment({"M1": True}, {"M1": False})
+
+    def test_model_without_passes_method_raises_error(self):
+        """Test that models without passes() method raise TypeError."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Test", mandatory=True),
+            ],
+            passing_score_threshold=0,
+        )
+
+        # Create a basic Pydantic model without passes() method
+        class FakeModel(BaseModel):
+            M1: bool
+
+        fake_a = FakeModel(M1=True)
+        fake_b = FakeModel(M1=False)
+
+        with pytest.raises(TypeError, match="must be instances from to_pydantic_model.*with passes\\(\\) method"):
+            rubric.calculate_alignment(fake_a, fake_b)
