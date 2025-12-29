@@ -20,27 +20,21 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     UV_LINK_MODE=copy
 
-# Define the non-root user
-ARG CI_USER=teval_user
-# Install Python versions required for testing (3.10 to 3.14)
-ARG PYTHON_VERSIONS="3.10 3.11 3.12 3.13 3.14"
+# Install Python versions required for testing (3.10 to 3.13)
+ARG PYTHON_VERSIONS="3.10 3.11 3.12 3.13"
 
-# Create a non-root user
-RUN useradd -m -s /bin/bash $CI_USER
+# Set working directory
+WORKDIR /workspace
 
-# Switch to the non-root user
-USER $CI_USER
-WORKDIR /home/$CI_USER/app
-
-# 1. Install the requested Python versions using uv.
+# Install the requested Python versions using uv (as root for CI)
 RUN uv python install $PYTHON_VERSIONS
 
-# 2. Install tox and the tox-uv plugin.
+# Install tox and the tox-uv plugin
 RUN uv tool install tox --with tox-uv
 
-# 3. Add the user's local bin and uv python bin to PATH so we can run 'tox' directly and find Python versions
-ENV PATH="/home/$CI_USER/.local/bin:${PATH}" \
-    UV_PYTHON_INSTALL_DIR="/home/$CI_USER/.local/share/uv/python"
+# Add uv tools to PATH so we can run 'tox' directly and find Python versions
+ENV PATH="/root/.local/bin:${PATH}" \
+    UV_PYTHON_INSTALL_DIR="/root/.local/share/uv/python"
 
 # Note: Code is NOT copied into the image - it will be mounted at runtime
 # This allows the image to be cached and reused across builds

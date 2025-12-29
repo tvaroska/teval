@@ -4,7 +4,7 @@ substitutions:
   _TOX_ENV: ''  # Empty = run all, or specify like 'py312-pydanticlatest'
 
 steps:
-  # Run tests directly in /workspace (Cloud Build will pull the image automatically)
+  # Run tests directly in /workspace
   # The /workspace directory contains the cloned repository code
   - name: '${_IMAGE_NAME}:${_IMAGE_TAG}'
     env:
@@ -28,5 +28,5 @@ steps:
 
 options:
   logging: CLOUD_LOGGING_ONLY
-  machineType: 'E2_HIGHCPU_8'  # 8 vCPUs for parallel tox execution
-  timeout: '1800s'  # 30 min global timeout
+
+timeout: '1800s'  # 30 min global timeout
