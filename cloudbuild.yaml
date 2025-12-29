@@ -1,0 +1,26 @@
+steps:
+  # Step 1: Pull the latest image from GitHub Container Registry
+  # This image contains Python 3.10-3.14 and tox, but NO code
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'pull'
+      - 'ghcr.io/tvaroska/teval:latest'
+
+  # Step 2: Run the tests with code from the repository
+  # The /workspace directory contains the cloned repository code
+  # We copy it into the container and run tox
+  - name: 'ghcr.io/tvaroska/teval:latest'
+    env:
+      - 'GOOGLE_CLOUD_PROJECT=$PROJECT_ID'
+      - 'HOME=/home/teval_user'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        # Copy code from Cloud Build workspace to container's working directory
+        cp -r /workspace/. /home/teval_user/app/
+        # Run the full tox test matrix (5 Python versions × 2 Pydantic versions)
+        cd /home/teval_user/app && tox
+
+options:
+  logging: CLOUD_LOGGING_ONLY
