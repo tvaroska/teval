@@ -1,26 +1,32 @@
-steps:
-  # Step 1: Pull the latest image from GitHub Container Registry
-  # This image contains Python 3.10-3.14 and tox, but NO code
-  - name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'pull'
-      - 'ghcr.io/tvaroska/teval:latest'
+substitutions:
+  _IMAGE_NAME: 'ghcr.io/tvaroska/teval'
+  _IMAGE_TAG: 'latest'
+  _TOX_ENV: ''  # Empty = run all, or specify like 'py312-pydanticlatest'
 
-  # Step 2: Run the tests with code from the repository
+steps:
+  # Run tests directly in /workspace (Cloud Build will pull the image automatically)
   # The /workspace directory contains the cloned repository code
-  # We copy it into the container and run tox
-  - name: 'ghcr.io/tvaroska/teval:latest'
+  - name: '${_IMAGE_NAME}:${_IMAGE_TAG}'
     env:
       - 'GOOGLE_CLOUD_PROJECT=$PROJECT_ID'
-      - 'HOME=/home/teval_user'
     entrypoint: 'bash'
+    timeout: '1200s'  # 20 min timeout for tests
     args:
       - '-c'
       - |
-        # Copy code from Cloud Build workspace to container's working directory
-        cp -r /workspace/. /home/teval_user/app/
-        # Run the full tox test matrix (5 Python versions × 2 Pydantic versions)
-        cd /home/teval_user/app && tox
+        set -euo pipefail
+        cd /workspace
+
+        # Run tox in parallel mode or specific environment
+        if [ -z "${_TOX_ENV}" ]; then
+          echo "Running full tox matrix in parallel..."
+          tox -p auto
+        else
+          echo "Running specific environment: ${_TOX_ENV}"
+          tox -e ${_TOX_ENV}
+        fi
 
 options:
   logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_HIGHCPU_8'  # 8 vCPUs for parallel tox execution
+  timeout: '1800s'  # 30 min global timeout

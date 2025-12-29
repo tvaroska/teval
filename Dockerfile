@@ -1,6 +1,17 @@
 # Use a lightweight base image
 FROM python:3.12-slim-bookworm
 
+# Install build tools and dependencies
+# These are required for compiling native extensions like pydantic-core
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    make \
+    build-essential \
+    libssl-dev \
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install uv from the official image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
