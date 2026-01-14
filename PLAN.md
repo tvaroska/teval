@@ -5,7 +5,8 @@
 ### P0: Production Readiness Blockers
 
 #### S0-DOC-1: Add Comprehensive API Docstrings
-**Status**: TODO
+**Status**: ✅ COMPLETED (2026-01-14)
+**Plan**: `/home/boris/.claude/plans/wiggly-discovering-pnueli.md`
 **Files**: `teval/metrics.py`
 **Requirements**:
 - Add detailed docstrings to all public methods

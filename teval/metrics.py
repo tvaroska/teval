@@ -1,3 +1,72 @@
+"""
+Evaluation metrics framework for LLM output assessment.
+
+This module provides a flexible framework for defining and validating evaluation
+rubrics for Large Language Model (LLM) outputs. It supports two types of metrics:
+mandatory (must-pass) and cumulative (scored), allowing for nuanced evaluation
+criteria.
+
+The framework is designed to integrate with any LLM provider through JSON Schema
+or Pydantic model generation, enabling structured output validation and
+human-LLM alignment measurement.
+
+Classes
+-------
+MetricDefinition
+    Defines a single Yes/No evaluation metric with optional mandatory flag.
+EvaluationRubric
+    Complete evaluation rubric containing metrics and passing thresholds.
+
+Examples
+--------
+Basic usage with mandatory and cumulative metrics:
+
+>>> from teval import EvaluationRubric, MetricDefinition
+>>>
+>>> rubric = EvaluationRubric(
+...     rubric_id="code_review_v1",
+...     metrics=[
+...         MetricDefinition(
+...             id="M1",
+...             rubric="Code compiles without errors",
+...             mandatory=True
+...         ),
+...         MetricDefinition(
+...             id="C1",
+...             rubric="Code follows style guidelines"
+...         ),
+...         MetricDefinition(
+...             id="C2",
+...             rubric="Code includes appropriate comments"
+...         )
+...     ],
+...     passing_score_threshold=1
+... )
+>>>
+>>> # Validate an evaluation result
+>>> result = {"M1": True, "C1": True, "C2": False}
+>>> rubric.validate_result(result)
+True
+
+Integration with LLM providers:
+
+>>> # Generate JSON Schema for structured output
+>>> schema = rubric.to_json_schema()
+>>>
+>>> # Or create a Pydantic model for validation
+>>> ResultModel = rubric.to_pydantic_model()
+>>> evaluation = ResultModel(M1=True, C1=True, C2=False)
+>>> evaluation.passes()
+True
+
+Notes
+-----
+The framework uses a simple scoring system where each cumulative metric
+has an implicit weight of 1.0, and the score is the count of passed metrics.
+This design prioritizes simplicity and interpretability over complex
+weighted scoring systems.
+"""
+
 import json
 from typing import List, Dict, Any, Union, Optional, Type
 from pydantic import BaseModel, ConfigDict, Field, field_validator, ValidationInfo, create_model
@@ -28,19 +97,98 @@ class EvaluationRubric(BaseModel):
 
     @property
     def mandatory_metrics(self) -> List[MetricDefinition]:
-        """Returns all metrics where mandatory=True."""
+        """
+        Return metrics marked as mandatory.
+
+        Filters the metrics list to return only those with mandatory=True.
+        These metrics must all pass for the overall evaluation to pass.
+
+        Returns
+        -------
+        List[MetricDefinition]
+            List of MetricDefinition instances where mandatory=True.
+            Empty list if no mandatory metrics are defined.
+
+        Examples
+        --------
+        >>> rubric = EvaluationRubric(
+        ...     rubric_id="test",
+        ...     metrics=[
+        ...         MetricDefinition(id="M1", rubric="Must pass", mandatory=True),
+        ...         MetricDefinition(id="C1", rubric="Optional")
+        ...     ],
+        ...     passing_score_threshold=0
+        ... )
+        >>> len(rubric.mandatory_metrics)
+        1
+        >>> rubric.mandatory_metrics[0].id
+        'M1'
+        """
         return [m for m in self.metrics if m.mandatory]
 
     @property
     def cumulative_metrics(self) -> List[MetricDefinition]:
-        """Returns all metrics where mandatory=False."""
+        """
+        Return metrics that contribute to the cumulative score.
+
+        Filters the metrics list to return only those with mandatory=False.
+        These metrics are scored, and a minimum number must pass based on
+        the passing_score_threshold.
+
+        Returns
+        -------
+        List[MetricDefinition]
+            List of MetricDefinition instances where mandatory=False.
+            Empty list if no cumulative metrics are defined.
+
+        Examples
+        --------
+        >>> rubric = EvaluationRubric(
+        ...     rubric_id="test",
+        ...     metrics=[
+        ...         MetricDefinition(id="M1", rubric="Must pass", mandatory=True),
+        ...         MetricDefinition(id="C1", rubric="Optional 1"),
+        ...         MetricDefinition(id="C2", rubric="Optional 2")
+        ...     ],
+        ...     passing_score_threshold=1
+        ... )
+        >>> len(rubric.cumulative_metrics)
+        2
+        >>> [m.id for m in rubric.cumulative_metrics]
+        ['C1', 'C2']
+        """
         return [m for m in self.metrics if not m.mandatory]
 
     @field_validator('passing_score_threshold')
     @classmethod
     def check_threshold_validity(cls, threshold: int, info: ValidationInfo) -> int:
         """
-        Ensures the passing threshold is not greater than the maximum possible score (total metric count).
+        Validate that the passing threshold is achievable.
+
+        Ensures the passing_score_threshold does not exceed the number of
+        cumulative metrics available, as this would make passing impossible.
+
+        Parameters
+        ----------
+        threshold : int
+            The proposed passing score threshold.
+        info : ValidationInfo
+            Pydantic validation context containing other field values.
+
+        Returns
+        -------
+        int
+            The validated threshold value.
+
+        Raises
+        ------
+        ValueError
+            If threshold exceeds the number of cumulative metrics.
+
+        Notes
+        -----
+        This is a Pydantic field validator that runs during model instantiation.
+        It ensures logical consistency of the rubric configuration.
         """
         metrics = info.data.get('metrics', [])
         # Count mandatory and cumulative metrics
@@ -58,7 +206,30 @@ class EvaluationRubric(BaseModel):
     @classmethod
     def check_unique_metric_ids(cls, metrics: List[MetricDefinition]) -> List[MetricDefinition]:
         """
-        Ensures all metric IDs are unique.
+        Validate that all metric IDs are unique.
+
+        Checks for duplicate metric IDs across the entire metrics list
+        to prevent ambiguity in evaluation results.
+
+        Parameters
+        ----------
+        metrics : List[MetricDefinition]
+            The list of metric definitions to validate.
+
+        Returns
+        -------
+        List[MetricDefinition]
+            The validated metrics list.
+
+        Raises
+        ------
+        ValueError
+            If duplicate metric IDs are found.
+
+        Notes
+        -----
+        This is a Pydantic field validator that runs during model instantiation.
+        Unique IDs are required for unambiguous result mapping.
         """
         ids = [m.id for m in metrics]
         if len(ids) != len(set(ids)):
@@ -67,10 +238,40 @@ class EvaluationRubric(BaseModel):
 
     def to_prompt_text(self) -> str:
         """
-        Generates formatted text to include in LLM prompts describing the evaluation rubric.
+        Generate formatted text for inclusion in LLM prompts.
 
-        Returns:
-            A formatted string describing all metrics and evaluation criteria.
+        Creates a human-readable markdown representation of the evaluation
+        rubric, clearly separating mandatory and cumulative criteria with
+        instructions for evaluation.
+
+        Returns
+        -------
+        str
+            Formatted markdown text containing:
+            - Rubric title and ID
+            - Mandatory criteria section (if any)
+            - Cumulative criteria section with threshold (if any)
+            - Clear evaluation instructions
+
+        Examples
+        --------
+        >>> rubric = EvaluationRubric(
+        ...     rubric_id="code_review",
+        ...     metrics=[
+        ...         MetricDefinition(id="M1", rubric="No syntax errors", mandatory=True),
+        ...         MetricDefinition(id="C1", rubric="Good variable names")
+        ...     ],
+        ...     passing_score_threshold=1
+        ... )
+        >>> prompt = rubric.to_prompt_text()
+        >>> print(prompt.split('\\n')[0])
+        # Evaluation Rubric: code_review
+
+        Notes
+        -----
+        The generated text is designed to be prepended to LLM prompts
+        to provide clear evaluation criteria. The format emphasizes the
+        distinction between mandatory and cumulative metrics.
         """
         lines = [f"# Evaluation Rubric: {self.rubric_id}", ""]
 
@@ -105,14 +306,46 @@ class EvaluationRubric(BaseModel):
 
     def to_json_schema(self) -> Dict[str, Any]:
         """
-        Generates a JSON Schema for structured LLM output generation (e.g., for Gemini, OpenAI).
+        Generate a JSON Schema for structured LLM output.
 
-        The schema defines an object with:
-        - A boolean field for each metric ID
-        - An optional 'reasoning' field for each metric
+        Creates a JSON Schema that defines the expected structure for
+        evaluation results. Compatible with OpenAI's response_format,
+        Gemini's response_schema, and other structured output APIs.
 
-        Returns:
-            A JSON Schema dictionary compatible with OpenAPI/Swagger specifications.
+        Returns
+        -------
+        Dict[str, Any]
+            JSON Schema dictionary with:
+            - type: "object"
+            - properties: Boolean field for each metric ID, optional reasoning fields
+            - required: List of all metric IDs
+            - additionalProperties: False (strict validation)
+
+        Examples
+        --------
+        >>> rubric = EvaluationRubric(
+        ...     rubric_id="test",
+        ...     metrics=[
+        ...         MetricDefinition(id="M1", rubric="Must pass", mandatory=True)
+        ...     ],
+        ...     passing_score_threshold=0
+        ... )
+        >>> schema = rubric.to_json_schema()
+        >>> schema['properties']['M1']['type']
+        'boolean'
+        >>> 'M1_reasoning' in schema['properties']
+        True
+
+        Notes
+        -----
+        The schema includes optional reasoning fields (metric_id + "_reasoning")
+        to capture LLM explanations. This is useful for debugging and
+        understanding evaluation decisions.
+
+        See Also
+        --------
+        to_pydantic_model : For type-safe validation with Pydantic models.
+        validate_result : To validate results against this schema.
         """
         properties = {}
         required = []
@@ -144,26 +377,55 @@ class EvaluationRubric(BaseModel):
 
     def to_pydantic_model(self) -> Type[BaseModel]:
         """
-        Dynamically creates a Pydantic model class for validation of evaluation results.
+        Create a dynamic Pydantic model for type-safe validation.
 
-        The generated model includes:
-        - A required boolean field for each metric
-        - An optional string field for reasoning (metric_id + "_reasoning")
-        - Helper methods: passes(), get_failed_metrics(), get_passed_metrics(), to_report()
+        Generates a Pydantic BaseModel class tailored to this rubric's metrics.
+        The model provides validation, serialization, and helper methods for
+        working with evaluation results.
 
-        Returns:
-            A Pydantic BaseModel class that can be used for validation and type hints.
+        Returns
+        -------
+        Type[BaseModel]
+            A dynamically generated Pydantic model class with:
+            - Required boolean field for each metric ID
+            - Optional string reasoning field for each metric
+            - Helper methods: passes(), get_failed_metrics(),
+              get_passed_metrics(), to_report()
 
-        Example:
-            >>> rubric = EvaluationRubric(...)
-            >>> ResultModel = rubric.to_pydantic_model()
-            >>> result = ResultModel(M1=True, C1=False, M1_reasoning="Looks good")
-            >>> result.M1
-            True
-            >>> result.passes()
-            False
-            >>> result.to_report()
-            'Evaluation Result: FAIL...'
+        Examples
+        --------
+        >>> rubric = EvaluationRubric(
+        ...     rubric_id="test",
+        ...     metrics=[
+        ...         MetricDefinition(id="M1", rubric="Must pass", mandatory=True),
+        ...         MetricDefinition(id="C1", rubric="Optional")
+        ...     ],
+        ...     passing_score_threshold=0
+        ... )
+        >>> ResultModel = rubric.to_pydantic_model()
+        >>> result = ResultModel(M1=True, C1=False, M1_reasoning="Well structured")
+        >>> result.M1
+        True
+        >>> result.passes()
+        True
+        >>> result.get_failed_metrics()
+        ['C1']
+
+        Notes
+        -----
+        The generated model class is cached internally for reuse. The model
+        name follows the pattern: EvaluationResult_{rubric_id}.
+
+        Helper methods on the generated model:
+        - passes(): Check if evaluation meets all requirements
+        - get_failed_metrics(): List metric IDs that failed
+        - get_passed_metrics(): List metric IDs that passed
+        - to_report(title): Generate formatted text report
+
+        See Also
+        --------
+        to_json_schema : For JSON Schema generation.
+        validate_result : For simple validation without model instantiation.
         """
         # Build field definitions for create_model
         field_definitions = {}
@@ -223,18 +485,54 @@ class EvaluationRubric(BaseModel):
 
     def validate_result(self, result: Union[str, Dict[str, Any]]) -> bool:
         """
-        Validates an LLM-generated evaluation result against this rubric.
+        Validate an LLM-generated evaluation result against this rubric.
 
-        Args:
-            result: JSON string or dictionary containing boolean values for each metric ID
+        Checks that all mandatory metrics pass and the cumulative score meets
+        the required threshold. Accepts either a JSON string or dictionary.
 
-        Returns:
+        Parameters
+        ----------
+        result : str or dict
+            Evaluation results as either:
+            - JSON string containing boolean values for each metric ID
+            - Dictionary mapping metric IDs to boolean values
+
+        Returns
+        -------
+        bool
             True if the evaluation passes (all mandatory metrics pass AND
             cumulative threshold is met), False otherwise.
 
-        Raises:
-            ValueError: If result is missing required metric IDs, contains invalid values,
-                       or if JSON string is malformed
+        Raises
+        ------
+        ValueError
+            If result is missing required metric IDs, contains non-boolean
+            values, or if JSON string is malformed.
+
+        Examples
+        --------
+        >>> rubric = EvaluationRubric(
+        ...     rubric_id="test",
+        ...     metrics=[
+        ...         MetricDefinition(id="M1", rubric="Must pass", mandatory=True),
+        ...         MetricDefinition(id="C1", rubric="Optional")
+        ...     ],
+        ...     passing_score_threshold=0
+        ... )
+        >>> rubric.validate_result({"M1": True, "C1": False})
+        True
+        >>> rubric.validate_result('{"M1": false, "C1": true}')
+        False
+
+        Notes
+        -----
+        This method performs strict validation - all metric IDs must be present
+        and have boolean values. Additional fields in the result are ignored.
+
+        See Also
+        --------
+        to_pydantic_model : For creating a validating model class.
+        generate_report : To create a formatted report of results.
         """
         # Parse JSON string if provided
         if isinstance(result, str):
@@ -275,25 +573,62 @@ class EvaluationRubric(BaseModel):
 
     def generate_report(self, result: Dict[str, Any], reasoning: Optional[Dict[str, Optional[str]]] = None, title: Optional[str] = None) -> str:
         """
-        Generates a consolidated text report of evaluation results.
+        Generate a formatted text report of evaluation results.
 
-        Args:
-            result: Dictionary mapping metric IDs to boolean pass/fail values
-            reasoning: Optional dictionary mapping metric IDs to reasoning strings
-            title: Optional custom title for the report. If not provided, uses "Evaluation Report: {rubric_id}"
+        Creates a comprehensive markdown report showing the overall pass/fail
+        status, individual metric results, and requirements for passing.
 
-        Returns:
-            A formatted text report showing:
+        Parameters
+        ----------
+        result : dict
+            Dictionary mapping metric IDs to boolean pass/fail values.
+        reasoning : dict, optional
+            Dictionary mapping metric IDs to explanation strings.
+            If not provided, no reasoning is included in the report.
+        title : str, optional
+            Custom title for the report. If not provided,
+            defaults to "Evaluation Report: {rubric_id}".
+
+        Returns
+        -------
+        str
+            Formatted markdown report containing:
             - Overall pass/fail status
-            - All metrics with their pass/fail status (each as separate paragraph)
+            - Mandatory criteria results (if any)
+            - Cumulative criteria results with score (if any)
             - Reasoning for each metric (if provided)
-            - What is required for passing
+            - Summary of requirements for passing
 
-        Example:
-            >>> rubric = EvaluationRubric(...)
-            >>> result = {"M1": True, "C1": False, "C2": True}
-            >>> reasoning = {"M1": "Code follows style guide", "C1": "Missing tests"}
-            >>> print(rubric.generate_report(result, reasoning, title="My Custom Report"))
+        Examples
+        --------
+        >>> rubric = EvaluationRubric(
+        ...     rubric_id="review",
+        ...     metrics=[
+        ...         MetricDefinition(id="M1", rubric="No errors", mandatory=True),
+        ...         MetricDefinition(id="C1", rubric="Good style")
+        ...     ],
+        ...     passing_score_threshold=1
+        ... )
+        >>> result = {"M1": True, "C1": False}
+        >>> reasoning = {"M1": "Code compiles", "C1": "Poor naming"}
+        >>> report = rubric.generate_report(result, reasoning, "Code Review")
+        >>> print(report.split('\\n')[0])
+        # Code Review
+
+        Notes
+        -----
+        The report uses Unicode symbols for visual clarity:
+        - ✓ for passed metrics
+        - ✗ for failed metrics
+        - ⚠️ for warnings about failed requirements
+
+        Each metric appears as a separate paragraph for readability.
+        Reasoning, when provided, is indented under the corresponding metric.
+
+        See Also
+        --------
+        validate_result : To check if results pass without generating a report.
+        to_pydantic_model : Model's to_report() method provides similar functionality.
         """
         if reasoning is None:
             reasoning = {}
@@ -392,33 +727,79 @@ class EvaluationRubric(BaseModel):
         results_b: Union[BaseModel, List[BaseModel]]
     ) -> float:
         """
-        Calculate alignment between two sets of evaluation results based on pass/fail agreement.
+        Calculate alignment between two sets of evaluation results.
 
-        Compares whether evaluation results agree on the overall pass/fail outcome.
-        Useful for validating if a cheaper model produces similar decisions to an expensive one,
-        or for checking human-LLM alignment.
+        Compares whether evaluation results agree on the overall pass/fail
+        outcome. This is useful for measuring human-LLM alignment or
+        comparing different model evaluations.
 
-        Args:
-            results_a: Single Pydantic model instance or list of instances from to_pydantic_model()
-            results_b: Single Pydantic model instance or list of instances from to_pydantic_model()
+        Parameters
+        ----------
+        results_a : BaseModel or List[BaseModel]
+            Single result or list of results from to_pydantic_model().
+            Must be instances of the model generated for this rubric.
+        results_b : BaseModel or List[BaseModel]
+            Single result or list of results to compare against.
+            Must match the type (single/list) of results_a.
 
-        Returns:
-            Float between 0.0 and 1.0:
-            - 1.0 = perfect alignment (all results agree on pass/fail)
-            - 0.0 = no alignment (all results disagree)
-            - For batch: fraction of aligned results (e.g., 0.95 = 95% aligned)
+        Returns
+        -------
+        float
+            Alignment score between 0.0 and 1.0:
+            - 1.0: Perfect alignment (all pass/fail decisions match)
+            - 0.0: No alignment (all decisions disagree)
+            - For lists: Fraction of aligned pairs (e.g., 0.85 = 85% agreement)
 
-        Raises:
-            TypeError: If inputs are not Pydantic BaseModel instances
-            ValueError: If batch lists have different lengths
+        Raises
+        ------
+        TypeError
+            If inputs are not Pydantic BaseModel instances or if
+            results_a and results_b have mismatched types (single vs list).
+        ValueError
+            If list inputs have different lengths.
 
-        Example:
-            >>> rubric = EvaluationRubric(...)
-            >>> ResultModel = rubric.to_pydantic_model()
-            >>> result_a = ResultModel(M1=True, C1=False)
-            >>> result_b = ResultModel(M1=True, C1=True)
-            >>> alignment = rubric.calculate_alignment(result_a, result_b)
-            >>> print(f"Alignment: {alignment:.1%}")
+        Examples
+        --------
+        Single result comparison:
+
+        >>> rubric = EvaluationRubric(
+        ...     rubric_id="test",
+        ...     metrics=[
+        ...         MetricDefinition(id="M1", rubric="Must pass", mandatory=True),
+        ...         MetricDefinition(id="C1", rubric="Optional")
+        ...     ],
+        ...     passing_score_threshold=1
+        ... )
+        >>> ResultModel = rubric.to_pydantic_model()
+        >>> human = ResultModel(M1=True, C1=True)
+        >>> llm = ResultModel(M1=True, C1=False)
+        >>> alignment = rubric.calculate_alignment(human, llm)
+        >>> print(f"Human-LLM alignment: {alignment:.0%}")
+        Human-LLM alignment: 100%
+
+        Batch comparison:
+
+        >>> humans = [ResultModel(M1=True, C1=True), ResultModel(M1=False, C1=False)]
+        >>> llms = [ResultModel(M1=True, C1=False), ResultModel(M1=False, C1=True)]
+        >>> alignment = rubric.calculate_alignment(humans, llms)
+        >>> print(f"Batch alignment: {alignment:.0%}")
+        Batch alignment: 50%
+
+        Notes
+        -----
+        Alignment is calculated at the overall pass/fail level, not at
+        individual metric level. Two results align if they both pass or
+        both fail, regardless of which specific metrics differ.
+
+        This metric is particularly useful for:
+        - Validating cheaper models against expensive ones
+        - Measuring inter-rater reliability in human evaluations
+        - Tracking consistency across model versions
+
+        See Also
+        --------
+        to_pydantic_model : To create the result models for comparison.
+        validate_result : For simple pass/fail checking.
         """
         # Normalize inputs to lists
         is_single_a = isinstance(results_a, BaseModel)
