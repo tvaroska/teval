@@ -1,0 +1,48 @@
+# Exclude version control
+.git/
+.gitignore
+
+# Exclude virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Exclude Python cache and compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.py[cod]
+*$py.class
+*.so
+
+# Exclude test and build artifacts
+.pytest_cache/
+.tox/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Exclude IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Exclude Claude and logs
+.claude/
+*.log
+
+# Exclude example files (not needed for testing)
+example_*.py
+
+# Exclude documentation build artifacts
+docs/_build/
+
+# Exclude lock files (will be regenerated)
+uv.lock

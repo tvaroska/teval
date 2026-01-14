@@ -17,7 +17,7 @@ A lightweight, straightforward evaluation framework for LLM outputs using Yes/No
 
 ## Installation
 
-**Requirements**: Python 3.10 - 3.14
+**Requirements**: Python 3.10 - 3.13 (Python 3.14 support pending Pydantic compatibility)
 
 This project uses [uv](https://github.com/astral-sh/uv) for dependency management:
 
@@ -45,7 +45,7 @@ An evaluation passes if:
 ### Example Structure
 
 ```python
-from tevak import EvaluationRubric, MetricDefinition
+from teval import EvaluationRubric, MetricDefinition
 
 rubric = EvaluationRubric(
     rubric_id="code_review_v1",
@@ -186,7 +186,7 @@ else:
 ### Complete Example
 
 ```python
-from tevak import EvaluationRubric, MetricDefinition
+from teval import EvaluationRubric, MetricDefinition
 import json
 
 # 1. Define rubric
@@ -291,7 +291,7 @@ result = client.chat.completions.create(
 
 ```
 teval/
-├── tevak/                          # Main package
+├── teval/                          # Main package
 │   ├── __init__.py
 │   └── metrics.py                  # Core evaluation framework
 ├── tests/                          # Test suite

@@ -1,1 +1,1 @@
-"""Tests for tevak."""
+"""Tests for teval."""
