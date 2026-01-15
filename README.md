@@ -19,7 +19,13 @@ A lightweight, straightforward evaluation framework for LLM outputs using Yes/No
 
 New to teval? Check out the [5-minute Quick Start Guide](docs/quickstart.md) to get up and running fast.
 
-For complete documentation, continue reading below.
+## Documentation
+
+- **[Quick Start Guide](docs/quickstart.md)** - Get started in 5 minutes
+- **[API Reference](docs/api.md)** - Complete API documentation for all classes and methods
+- **[Roadmap](docs/roadmap.md)** - Future development plans
+
+For complete usage details, continue reading below.
 
 ## Installation
 

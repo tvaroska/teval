@@ -35,8 +35,9 @@
 ### P1: Critical Documentation
 
 #### S0-DOC-3: API Reference Documentation
-**Status**: TODO
-**Files**: `docs/api.md`
+**Status**: ✅ COMPLETED (2026-01-15)
+**Plan**: `/home/boris/.claude/plans/snuggly-toasting-pinwheel.md`
+**Files**: `docs/api.md`, `docs/generate_api_html.py`, `pyproject.toml`
 **Requirements**:
 - Complete API reference for all public classes/methods
 - Generated from docstrings
