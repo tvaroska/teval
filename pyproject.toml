@@ -37,6 +37,11 @@ dependencies = [
 "Documentation" = "https://github.com/tvaroska/teval/tree/main/docs"
 "Changelog" = "https://github.com/tvaroska/teval/blob/main/CHANGELOG.md"
 
+[project.optional-dependencies]
+human = [
+    "python-fasthtml>=0.4.0",
+]
+
 [dependency-groups]
 dev = [
     "pdoc>=16.0.0",
