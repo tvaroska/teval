@@ -15,6 +15,12 @@ A lightweight, straightforward evaluation framework for LLM outputs using Yes/No
 - **Type safety**: Full IDE autocomplete and type checking support
 - **Minimal dependencies**: Only requires Pydantic 2.7.4+ (< 3.0.0)
 
+## Quick Start
+
+New to teval? Check out the [5-minute Quick Start Guide](docs/quickstart.md) to get up and running fast.
+
+For complete documentation, continue reading below.
+
 ## Installation
 
 **Requirements**: Python 3.10 - 3.13 (Python 3.14 support pending Pydantic compatibility)

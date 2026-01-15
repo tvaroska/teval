@@ -16,13 +16,15 @@
 - Follow NumPy docstring style guide
 
 #### S0-BUG-1: Fix Python Version Inconsistencies
-**Status**: TODO
+**Status**: ✅ COMPLETED (2025-12-29, commit 7656ec8)
+**Plan**: `/home/boris/.claude/plans/rippling-wondering-feigenbaum.md`
 **Files**: `pyproject.toml`, `tox.ini`, `Dockerfile`
 **Issue**: pyproject.toml restricts to <3.14 but tox.ini tests 3.14
 **Fix**: Align all configuration files to support Python 3.10-3.13
 
 #### S0-DOC-2: Create Quick Start Guide
-**Status**: TODO
+**Status**: ✅ COMPLETED (2026-01-14)
+**Plan**: `/home/boris/.claude/plans/replicated-painting-puffin.md`
 **Files**: `docs/quickstart.md`, `README.md`
 **Requirements**:
 - 5-minute guide from zero to first evaluation
