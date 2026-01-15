@@ -44,38 +44,18 @@
 - Include type information
 - Cross-referenced examples
 
-#### S0-DOC-4: Add CHANGELOG.md
-**Status**: TODO
-**Files**: `CHANGELOG.md`
-**Requirements**:
-- Document version 0.1.0 and 0.1.1 changes
-- Set up semantic versioning
-- Add "Unreleased" section for ongoing work
-
-#### S0-DOC-5: Add CONTRIBUTING.md
-**Status**: TODO
-**Files**: `CONTRIBUTING.md`
-**Requirements**:
-- Development setup instructions
-- Code style guide
-- Testing requirements
-- PR process
 
 ### P2: Production Robustness
 
-#### S0-PERF-1: Add Caching for Pydantic Model Generation
-**Status**: TODO
-**Files**: `teval/metrics.py`
-**Details**: Cache dynamically generated Pydantic models to avoid recreation
-
 #### S0-VAL-1: Improve Input Validation
-**Status**: TODO
-**Files**: `teval/metrics.py`
+**Status**: ✅ COMPLETED (2026-01-15)
+**Plan**: `/home/boris/.claude/plans/compiled-dreaming-cook.md`
+**Files**: `teval/metrics.py`, `tests/test_metrics.py`
 **Requirements**:
-- Validate metric IDs for JSON compatibility
-- Check for empty metric lists
-- Add maximum limits for metric counts
-- Better error messages with context
+- ✅ Validate metric IDs for JSON compatibility
+- ✅ Check for empty metric lists
+- ✅ Add maximum limits for metric counts (100 total, 20 mandatory)
+- ✅ Better error messages with context
 
 ## Sprint 1: Human-LLM Alignment
 
@@ -182,6 +162,7 @@ passes = rubric.validate_result(response)
 ## Backlog (Future Sprints)
 
 ### Performance & Scale
+- Caching for Pydantic model generation (avoid recreation)
 - Async evaluation support
 - Batch processing optimizations
 - Distributed evaluation

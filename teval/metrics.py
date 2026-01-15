@@ -68,6 +68,7 @@ weighted scoring systems.
 """
 
 import json
+import keyword
 from typing import List, Dict, Any, Union, Optional, Type
 from pydantic import BaseModel, ConfigDict, Field, field_validator, ValidationInfo, create_model
 
@@ -83,6 +84,79 @@ class MetricDefinition(BaseModel):
     id: str = Field(..., description="Unique identifier for the metric (e.g., 'M1', 'code_style_pass')")
     rubric: str = Field(..., description="The specific pass/fail criterion, acting as the rubric for this metric.")
     mandatory: bool = Field(default=False, description="If True, this metric must pass for the evaluation to pass.")
+
+    @field_validator('id')
+    @classmethod
+    def validate_metric_id(cls, metric_id: str) -> str:
+        """
+        Validate that metric ID is JSON-compatible and valid Python identifier.
+
+        Ensures the metric ID can be used as:
+        - A JSON object key
+        - A Python attribute name in dynamically generated Pydantic models
+        - A unique identifier without conflicts with reserved names
+
+        Parameters
+        ----------
+        metric_id : str
+            The proposed metric ID to validate.
+
+        Returns
+        -------
+        str
+            The validated metric ID.
+
+        Raises
+        ------
+        ValueError
+            If the metric ID is invalid for any of the following reasons:
+            - Empty string
+            - Too long (>100 characters)
+            - Not a valid Python identifier
+            - Is a Python keyword
+            - Conflicts with reserved Pydantic model attributes
+
+        Examples
+        --------
+        Valid IDs: "M1", "metric_1", "_private", "camelCase"
+        Invalid IDs: "1metric", "metric-1", "class", "model_dump"
+        """
+        # Check if empty
+        if not metric_id:
+            raise ValueError("Metric ID cannot be empty")
+
+        # Check length limit
+        if len(metric_id) > 100:
+            raise ValueError(f"Metric ID '{metric_id[:50]}...' is too long (max 100 characters)")
+
+        # Check if it's a valid Python identifier
+        if not metric_id.isidentifier():
+            raise ValueError(
+                f"Metric ID '{metric_id}' is not a valid identifier. "
+                "IDs must start with a letter or underscore, and contain only "
+                "letters, numbers, and underscores."
+            )
+
+        # Check for Python keywords
+        if keyword.iskeyword(metric_id):
+            raise ValueError(
+                f"Metric ID '{metric_id}' is a Python keyword and cannot be used. "
+                "Please choose a different ID."
+            )
+
+        # Check for reserved Pydantic model attributes
+        reserved_attrs = {
+            'model_', 'passes', 'get_failed_metrics', 'get_passed_metrics',
+            'to_report', 'dict', 'json', 'copy', 'parse', 'schema', 'validate',
+            'construct', 'fields', 'config'
+        }
+        if metric_id in reserved_attrs or metric_id.startswith('model_'):
+            raise ValueError(
+                f"Metric ID '{metric_id}' conflicts with reserved Pydantic model attributes. "
+                "Please choose a different ID."
+            )
+
+        return metric_id
 
 
 class EvaluationRubric(BaseModel):
@@ -197,19 +271,24 @@ class EvaluationRubric(BaseModel):
 
         if threshold > cumulative_count:
             raise ValueError(
-                f"Passing threshold ({threshold}) cannot exceed the number of cumulative metrics ({cumulative_count}). "
-                f"You have {mandatory_count} mandatory metric(s) and {cumulative_count} cumulative metric(s)."
+                f"Invalid passing threshold: {threshold} exceeds the number of "
+                f"cumulative metrics ({cumulative_count}). "
+                f"Rubric has {mandatory_count} mandatory metric(s) and "
+                f"{cumulative_count} cumulative metric(s). "
+                f"Please set passing_score_threshold to {cumulative_count} or lower."
             )
         return threshold
 
     @field_validator('metrics')
     @classmethod
-    def check_unique_metric_ids(cls, metrics: List[MetricDefinition]) -> List[MetricDefinition]:
+    def validate_metrics_list(cls, metrics: List[MetricDefinition]) -> List[MetricDefinition]:
         """
-        Validate that all metric IDs are unique.
+        Validate the metrics list for various constraints.
 
-        Checks for duplicate metric IDs across the entire metrics list
-        to prevent ambiguity in evaluation results.
+        Performs comprehensive validation including:
+        - Non-empty list check
+        - Maximum count limits
+        - Duplicate ID detection
 
         Parameters
         ----------
@@ -224,16 +303,50 @@ class EvaluationRubric(BaseModel):
         Raises
         ------
         ValueError
-            If duplicate metric IDs are found.
+            If any of the following conditions are violated:
+            - Empty metrics list
+            - Total metrics exceed maximum (100)
+            - Mandatory metrics exceed maximum (20)
+            - Duplicate metric IDs exist
 
         Notes
         -----
         This is a Pydantic field validator that runs during model instantiation.
-        Unique IDs are required for unambiguous result mapping.
+        The conservative limits ensure reasonable rubric complexity and performance.
         """
+        # Check for empty list
+        if not metrics:
+            raise ValueError(
+                "Evaluation rubric must contain at least one metric. "
+                "Add MetricDefinition instances to the metrics list."
+            )
+
+        # Check maximum limits
+        MAX_TOTAL_METRICS = 100
+        MAX_MANDATORY_METRICS = 20
+
+        if len(metrics) > MAX_TOTAL_METRICS:
+            raise ValueError(
+                f"Too many metrics: {len(metrics)} exceeds maximum of {MAX_TOTAL_METRICS}. "
+                "Consider splitting into multiple rubrics or reducing metric count."
+            )
+
+        mandatory_count = sum(1 for m in metrics if m.mandatory)
+        if mandatory_count > MAX_MANDATORY_METRICS:
+            raise ValueError(
+                f"Too many mandatory metrics: {mandatory_count} exceeds maximum of {MAX_MANDATORY_METRICS}. "
+                "Consider making some metrics cumulative instead of mandatory."
+            )
+
+        # Check for duplicate IDs
         ids = [m.id for m in metrics]
-        if len(ids) != len(set(ids)):
-            raise ValueError("Duplicate metric IDs found in metrics list.")
+        duplicates = [id for id in set(ids) if ids.count(id) > 1]
+        if duplicates:
+            raise ValueError(
+                f"Duplicate metric IDs found: {', '.join(sorted(set(duplicates)))}. "
+                "Each metric must have a unique ID."
+            )
+
         return metrics
 
     def to_prompt_text(self) -> str:
@@ -551,13 +664,29 @@ class EvaluationRubric(BaseModel):
                 missing_metrics.append(metric.id)
 
         if missing_metrics:
-            raise ValueError(f"Missing metric results for: {', '.join(missing_metrics)}")
+            mandatory_missing = [m for m in missing_metrics if any(
+                metric.id == m and metric.mandatory for metric in self.metrics
+            )]
+            cumulative_missing = [m for m in missing_metrics if m not in mandatory_missing]
+
+            error_parts = [f"Missing evaluation results for {len(missing_metrics)} metric(s):"]
+            if mandatory_missing:
+                error_parts.append(f"  Mandatory: {', '.join(mandatory_missing)}")
+            if cumulative_missing:
+                error_parts.append(f"  Cumulative: {', '.join(cumulative_missing)}")
+            error_parts.append("All metrics defined in the rubric must have boolean results.")
+
+            raise ValueError('\n'.join(error_parts))
 
         # Validate all values are boolean
         for metric in self.metrics:
             value = result[metric.id]
             if not isinstance(value, bool):
-                raise ValueError(f"Metric {metric.id} must be boolean, got {type(value).__name__}")
+                metric_def = next(m for m in self.metrics if m.id == metric.id)
+                raise ValueError(
+                    f"Invalid result for metric '{metric.id}': expected boolean, got {type(value).__name__}. "
+                    f"Metric rubric: '{metric_def.rubric[:50]}{'...' if len(metric_def.rubric) > 50 else ''}'"
+                )
 
         # Check mandatory metrics
         for metric in self.mandatory_metrics:

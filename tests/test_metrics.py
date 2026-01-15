@@ -38,6 +38,47 @@ class TestMetricDefinition:
         with pytest.raises(ValidationError):
             MetricDefinition(rubric="Test rubric")  # Missing id
 
+    def test_metric_id_validation_valid(self):
+        """Test valid metric IDs are accepted."""
+        # Valid IDs should work
+        valid_ids = ["M1", "metric_1", "_private", "camelCase", "UPPER_CASE"]
+        for valid_id in valid_ids:
+            metric = MetricDefinition(id=valid_id, rubric="Test")
+            assert metric.id == valid_id
+
+    def test_metric_id_validation_empty(self):
+        """Test empty metric ID is rejected."""
+        with pytest.raises(ValidationError, match="Metric ID cannot be empty"):
+            MetricDefinition(id="", rubric="Test")
+
+    def test_metric_id_validation_too_long(self):
+        """Test metric ID length limit."""
+        long_id = "a" * 101  # 101 characters, over the 100 limit
+        with pytest.raises(ValidationError, match="too long"):
+            MetricDefinition(id=long_id, rubric="Test")
+
+    def test_metric_id_validation_invalid_identifier(self):
+        """Test invalid Python identifiers are rejected."""
+        invalid_ids = ["1metric", "metric-1", "metric.1", "metric name", "metric@test"]
+        for invalid_id in invalid_ids:
+            with pytest.raises(ValidationError, match="not a valid identifier"):
+                MetricDefinition(id=invalid_id, rubric="Test")
+
+    def test_metric_id_validation_python_keyword(self):
+        """Test Python keywords are rejected as metric IDs."""
+        keywords = ["class", "def", "return", "if", "for", "import"]
+        for keyword_id in keywords:
+            with pytest.raises(ValidationError, match="Python keyword"):
+                MetricDefinition(id=keyword_id, rubric="Test")
+
+    def test_metric_id_validation_reserved_attributes(self):
+        """Test reserved Pydantic attributes are rejected."""
+        reserved_ids = ["dict", "json", "model_dump", "model_config", "passes",
+                       "get_failed_metrics", "get_passed_metrics", "to_report"]
+        for reserved_id in reserved_ids:
+            with pytest.raises(ValidationError, match="conflicts with reserved"):
+                MetricDefinition(id=reserved_id, rubric="Test")
+
 
 class TestEvaluationRubric:
     """Tests for EvaluationRubric model."""
@@ -93,7 +134,7 @@ class TestEvaluationRubric:
 
     def test_duplicate_metric_ids_rejected(self):
         """Test that duplicate metric IDs are rejected."""
-        with pytest.raises(ValidationError, match="Duplicate metric IDs"):
+        with pytest.raises(ValidationError, match="Duplicate metric IDs found: M1"):
             EvaluationRubric(
                 rubric_id="test_v1",
                 metrics=[
@@ -103,10 +144,72 @@ class TestEvaluationRubric:
                 passing_score_threshold=0,
             )
 
+    def test_empty_metrics_list_rejected(self):
+        """Test that empty metrics list is rejected."""
+        with pytest.raises(ValidationError, match="Evaluation rubric must contain at least one metric"):
+            EvaluationRubric(
+                rubric_id="test_v1",
+                metrics=[],
+                passing_score_threshold=0,
+            )
+
+    def test_maximum_total_metrics_limit(self):
+        """Test that total metrics cannot exceed maximum limit."""
+        # Create 101 metrics (exceeds limit of 100)
+        too_many_metrics = [
+            MetricDefinition(id=f"M{i}", rubric=f"Metric {i}")
+            for i in range(101)
+        ]
+        with pytest.raises(ValidationError, match="Too many metrics: 101 exceeds maximum of 100"):
+            EvaluationRubric(
+                rubric_id="test_v1",
+                metrics=too_many_metrics,
+                passing_score_threshold=0,
+            )
+
+    def test_maximum_mandatory_metrics_limit(self):
+        """Test that mandatory metrics cannot exceed maximum limit."""
+        # Create 21 mandatory metrics (exceeds limit of 20)
+        too_many_mandatory = [
+            MetricDefinition(id=f"M{i}", rubric=f"Mandatory {i}", mandatory=True)
+            for i in range(21)
+        ]
+        with pytest.raises(ValidationError, match="Too many mandatory metrics: 21 exceeds maximum of 20"):
+            EvaluationRubric(
+                rubric_id="test_v1",
+                metrics=too_many_mandatory,
+                passing_score_threshold=0,
+            )
+
+    def test_metrics_at_limit_accepted(self):
+        """Test that metrics at the limit are accepted."""
+        # Create exactly 100 metrics with 20 mandatory (at limits)
+        metrics_at_limit = []
+        # Add 20 mandatory metrics
+        for i in range(20):
+            metrics_at_limit.append(
+                MetricDefinition(id=f"M{i}", rubric=f"Mandatory {i}", mandatory=True)
+            )
+        # Add 80 cumulative metrics
+        for i in range(20, 100):
+            metrics_at_limit.append(
+                MetricDefinition(id=f"C{i}", rubric=f"Cumulative {i}")
+            )
+
+        # This should work without raising an exception
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=metrics_at_limit,
+            passing_score_threshold=40,
+        )
+        assert len(rubric.metrics) == 100
+        assert len(rubric.mandatory_metrics) == 20
+        assert len(rubric.cumulative_metrics) == 80
+
     def test_threshold_exceeds_cumulative_count_rejected(self):
         """Test that threshold cannot exceed cumulative metric count."""
         with pytest.raises(
-            ValidationError, match="cannot exceed the number of cumulative metrics.*1 mandatory metric.*2 cumulative metric"
+            ValidationError, match="Invalid passing threshold.*exceeds the number of.*cumulative metrics.*Please set passing_score_threshold"
         ):
             EvaluationRubric(
                 rubric_id="test_v1",
@@ -319,21 +422,47 @@ class TestEvaluationRubric:
         )
 
         result = {"M1": True}  # Missing C1
-        with pytest.raises(ValueError, match="Missing metric results for: C1"):
+        with pytest.raises(ValueError) as exc_info:
             rubric.validate_result(result)
+
+        error_msg = str(exc_info.value)
+        assert "Missing evaluation results for 1 metric(s)" in error_msg
+        assert "Cumulative: C1" in error_msg
+
+    def test_validate_result_missing_multiple_metrics(self):
+        """Test enhanced error message for multiple missing metrics."""
+        rubric = EvaluationRubric(
+            rubric_id="test_v1",
+            metrics=[
+                MetricDefinition(id="M1", rubric="Mandatory 1", mandatory=True),
+                MetricDefinition(id="M2", rubric="Mandatory 2", mandatory=True),
+                MetricDefinition(id="C1", rubric="Cumulative 1"),
+                MetricDefinition(id="C2", rubric="Cumulative 2"),
+            ],
+            passing_score_threshold=0,
+        )
+
+        result = {"C1": True}  # Missing M1, M2, C2
+        with pytest.raises(ValueError) as exc_info:
+            rubric.validate_result(result)
+
+        error_msg = str(exc_info.value)
+        assert "Missing evaluation results for 3 metric(s)" in error_msg
+        assert "Mandatory: M1, M2" in error_msg
+        assert "Cumulative: C2" in error_msg
 
     def test_validate_result_invalid_type(self):
         """Test validation fails when metric value is not boolean."""
         rubric = EvaluationRubric(
             rubric_id="test_v1",
             metrics=[
-                MetricDefinition(id="M1", rubric="Test", mandatory=True),
+                MetricDefinition(id="M1", rubric="Test validation check with a long description", mandatory=True),
             ],
             passing_score_threshold=0,
         )
 
         result = {"M1": "yes"}  # String instead of boolean
-        with pytest.raises(ValueError, match="must be boolean"):
+        with pytest.raises(ValueError, match="Invalid result for metric 'M1': expected boolean, got str"):
             rubric.validate_result(result)
 
     def test_validate_result_ignores_extra_fields(self):
