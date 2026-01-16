@@ -3,6 +3,8 @@ Human evaluation interface for teval.
 
 This module provides web-based forms for collecting human evaluations
 using FastHTML and HTMX for interactive, modern UI without complex JavaScript.
+It also includes bulk import utilities for processing evaluation data from
+CSV, JSON, and Pandas DataFrame formats.
 
 The human evaluation features are optional and require FastHTML:
     pip install teval[human]
@@ -34,6 +36,12 @@ Use form components directly:
 >>> form = EvaluationForm(rubric)
 >>> html_component = form.render()
 
+Import evaluation data from files:
+
+>>> from teval.human import import_evaluations
+>>> results, report = import_evaluations("evaluations.csv", rubric)
+>>> print(f"Imported {report.success_count} evaluations")
+
 Notes
 -----
 The human evaluation interface provides:
@@ -41,6 +49,7 @@ The human evaluation interface provides:
 - Auto-save to browser local storage
 - Progress tracking and filtering
 - JSON export functionality
+- Bulk import from CSV, JSON, and DataFrame formats
 - Mobile-responsive design
 - Keyboard shortcuts for efficiency
 - HTMX-powered updates without page refreshes
@@ -53,10 +62,22 @@ follows WCAG guidelines for contrast and keyboard navigation.
 try:
     from teval.human.app import create_evaluation_app
     from teval.human.forms import EvaluationForm
+    from teval.human.importers import (
+        import_evaluations,
+        ImportReport,
+        CSVImporter,
+        JSONImporter,
+        DataFrameImporter
+    )
 
     __all__ = [
         "create_evaluation_app",
         "EvaluationForm",
+        "import_evaluations",
+        "ImportReport",
+        "CSVImporter",
+        "JSONImporter",
+        "DataFrameImporter",
     ]
 
 except ImportError as e:

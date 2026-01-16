@@ -83,9 +83,28 @@ app = create_evaluation_app(rubric, title="Evaluation")
 ```
 
 #### S1-FE-2: Bulk Import for Existing Human Data
-**Status**: TODO
-**Files**: `teval/human/importers.py`
-**Support**: CSV, JSON, Pandas DataFrame import
+**Status**: ✅ COMPLETED (2026-01-15)
+**Plan**: `/home/boris/.claude/plans/parallel-crunching-shannon.md`
+**Files**: `teval/human/importers.py`, `tests/test_importers.py`
+**Implementation**: Standalone module for batch preparation of evaluation data
+**Features**:
+- Import from CSV, JSON, and Pandas DataFrame formats
+- Best-effort validation with detailed import reports
+- Handles missing/invalid data gracefully (defaults to False)
+- Auto-detection of file formats
+- Support for nested JSON structures
+- Comprehensive test coverage (42 tests passing)
+**Usage**:
+```python
+from teval.human import import_evaluations
+
+# Import from various formats
+results, report = import_evaluations("evaluations.csv", rubric)
+results, report = import_evaluations(dataframe, rubric)
+results, report = import_evaluations(json_data, rubric)
+
+print(f"Imported {report.success_count}/{report.total_count} evaluations")
+```
 
 #### S1-BE-1: Inter-rater Reliability Metrics
 **Status**: TODO
