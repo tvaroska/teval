@@ -221,7 +221,8 @@ suggested_metrics = [
 ```
 
 #### S0-ALIGN-2: Human-LLM Alignment Analysis
-**Status**: TODO
+**Status**: ✅ COMPLETED (2026-01-17)
+**Plan**: `/home/boris/.claude/plans/greedy-sleeping-newt.md`
 **Files**: `teval/alignment.py`, `tests/test_alignment.py`
 **Requirements**:
 - Calculate inter-rater reliability (Cohen's Kappa, Fleiss' Kappa)
