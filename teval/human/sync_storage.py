@@ -284,6 +284,226 @@ class FileBasedStorage:
 
         return report
 
+    def save_item_evaluation(
+        self,
+        session_id: str,
+        item_id: str,
+        evaluation_data: Dict[str, Any],
+        item_content: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Save evaluation associated with a specific item.
+
+        Args:
+            session_id: Unique session identifier
+            item_id: ID of the evaluated item
+            evaluation_data: The evaluation results
+            item_content: Optional item content (prompt, response, etc.)
+            metadata: Optional metadata (evaluator, timestamp, etc.)
+
+        Returns:
+            Dict with status and file info
+        """
+        timestamp = datetime.now()
+        timestamp_str = timestamp.strftime("%Y%m%d_%H%M%S")
+
+        # Create items directory structure
+        items_dir = self.storage_dir / "items"
+        items_dir.mkdir(exist_ok=True)
+
+        item_dir = items_dir / item_id
+        item_dir.mkdir(exist_ok=True)
+
+        evaluations_dir = item_dir / "evaluations"
+        evaluations_dir.mkdir(exist_ok=True)
+
+        # Prepare data package with item association
+        data_package = {
+            "session_id": session_id,
+            "item_id": item_id,
+            "timestamp": timestamp.isoformat(),
+            "evaluation": evaluation_data,
+            "item_content": item_content or {},
+            "metadata": metadata or {},
+            "version": "1.0"
+        }
+
+        # Calculate checksum
+        data_json = json.dumps(data_package, sort_keys=True)
+        checksum = hashlib.md5(data_json.encode()).hexdigest()
+        data_package["checksum"] = checksum
+
+        # Save evaluation for this item
+        eval_file = evaluations_dir / f"{session_id}_{timestamp_str}.json"
+        with open(eval_file, 'w') as f:
+            json.dump(data_package, f, indent=2)
+
+        # Also save in regular session directory for backward compatibility
+        session_dir = self.sessions_dir / session_id
+        session_dir.mkdir(exist_ok=True)
+
+        item_eval_file = session_dir / f"item_{item_id}_{timestamp_str}.json"
+        with open(item_eval_file, 'w') as f:
+            json.dump(data_package, f, indent=2)
+
+        # Update progress tracking
+        self._update_item_progress(session_id, item_id, "completed")
+
+        return {
+            "status": "success",
+            "session_id": session_id,
+            "item_id": item_id,
+            "backup_file": str(eval_file.name),
+            "checksum": checksum
+        }
+
+    def get_item_evaluations(self, item_id: str) -> List[Dict[str, Any]]:
+        """
+        Get all evaluations for a specific item.
+
+        Args:
+            item_id: ID of the item
+
+        Returns:
+            List of all evaluations for this item
+        """
+        item_dir = self.storage_dir / "items" / item_id / "evaluations"
+
+        if not item_dir.exists():
+            return []
+
+        evaluations = []
+        for eval_file in sorted(item_dir.glob("*.json")):
+            with open(eval_file, 'r') as f:
+                evaluations.append(json.load(f))
+
+        return evaluations
+
+    def get_evaluator_progress(self, session_id: str) -> Dict[str, Any]:
+        """
+        Get progress statistics for an evaluator.
+
+        Args:
+            session_id: Session identifier
+
+        Returns:
+            Progress information including completed, skipped, and remaining items
+        """
+        progress_file = self.sessions_dir / session_id / "progress.json"
+
+        if progress_file.exists():
+            with open(progress_file, 'r') as f:
+                return json.load(f)
+
+        # Default progress
+        return {
+            "session_id": session_id,
+            "completed_items": [],
+            "skipped_items": [],
+            "current_item": None,
+            "total_completed": 0,
+            "last_updated": None
+        }
+
+    def update_evaluator_progress(
+        self,
+        session_id: str,
+        item_id: Optional[str] = None,
+        status: str = "current",
+        progress_data: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Update evaluator's progress.
+
+        Args:
+            session_id: Session identifier
+            item_id: ID of the item (optional)
+            status: Status of the item ("current", "completed", "skipped")
+            progress_data: Full progress data to save
+
+        Returns:
+            Updated progress data
+        """
+        session_dir = self.sessions_dir / session_id
+        session_dir.mkdir(exist_ok=True)
+
+        progress_file = session_dir / "progress.json"
+
+        # Load existing progress or use provided data
+        if progress_data:
+            progress = progress_data
+        elif progress_file.exists():
+            with open(progress_file, 'r') as f:
+                progress = json.load(f)
+        else:
+            progress = {
+                "session_id": session_id,
+                "completed_items": [],
+                "skipped_items": [],
+                "current_item": None,
+                "total_completed": 0
+            }
+
+        # Update based on status
+        if item_id:
+            if status == "completed":
+                if item_id not in progress["completed_items"]:
+                    progress["completed_items"].append(item_id)
+                    progress["total_completed"] = len(progress["completed_items"])
+                if item_id in progress.get("skipped_items", []):
+                    progress["skipped_items"].remove(item_id)
+                if progress.get("current_item") == item_id:
+                    progress["current_item"] = None
+
+            elif status == "skipped":
+                if item_id not in progress.get("skipped_items", []):
+                    if "skipped_items" not in progress:
+                        progress["skipped_items"] = []
+                    progress["skipped_items"].append(item_id)
+                if progress.get("current_item") == item_id:
+                    progress["current_item"] = None
+
+            elif status == "current":
+                progress["current_item"] = item_id
+
+        progress["last_updated"] = datetime.now().isoformat()
+
+        # Save updated progress
+        with open(progress_file, 'w') as f:
+            json.dump(progress, f, indent=2)
+
+        return progress
+
+    def _update_item_progress(self, session_id: str, item_id: str, status: str):
+        """Internal method to update item progress."""
+        self.update_evaluator_progress(session_id, item_id, status)
+
+    def get_unassigned_items(self, all_items: List[str]) -> List[str]:
+        """
+        Get list of items not yet assigned to any evaluator.
+
+        Args:
+            all_items: List of all available item IDs
+
+        Returns:
+            List of unassigned item IDs
+        """
+        assigned_items = set()
+
+        # Check all session progress files
+        for session_dir in self.sessions_dir.iterdir():
+            if session_dir.is_dir():
+                progress_file = session_dir / "progress.json"
+                if progress_file.exists():
+                    with open(progress_file, 'r') as f:
+                        progress = json.load(f)
+                        assigned_items.update(progress.get("completed_items", []))
+                        if progress.get("current_item"):
+                            assigned_items.add(progress["current_item"])
+
+        return [item_id for item_id in all_items if item_id not in assigned_items]
+
 
 def create_sync_endpoints(app, storage: FileBasedStorage, rubric):
     """

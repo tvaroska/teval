@@ -88,7 +88,8 @@ app = create_evaluation_app_with_storage(
 - Backwards compatible (storage is optional)
 
 #### S0-FE-2: Evaluation Items Management
-**Status**: TODO
+**Status**: ✅ COMPLETED (2026-01-17)
+**Plan**: `/home/boris/.claude/plans/recursive-plotting-metcalfe.md`
 **Files**: `teval/human/app.py`, `teval/human/items.py`, `tests/test_items.py`
 **Requirements**:
 - Display prompt + response pairs for evaluation

@@ -73,6 +73,13 @@ try:
         FileBasedStorage,
         create_sync_endpoints
     )
+    from teval.human.items import (
+        ItemsManager,
+        ItemSource,
+        ListItemSource,
+        FileItemSource,
+        normalize_items
+    )
 
     __all__ = [
         "create_evaluation_app",
@@ -84,6 +91,12 @@ try:
         "DataFrameImporter",
         "FileBasedStorage",
         "create_sync_endpoints",
+        # Items management
+        "ItemsManager",
+        "ItemSource",
+        "ListItemSource",
+        "FileItemSource",
+        "normalize_items",
     ]
 
 except ImportError as e:

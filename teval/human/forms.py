@@ -106,7 +106,9 @@ class EvaluationForm:
         title: Optional[str] = None,
         include_reasoning: bool = True,
         enable_sync: bool = False,
-        sync_interval: int = 30
+        sync_interval: int = 30,
+        enable_items: bool = False,
+        allow_skip: bool = True
     ):
         """Initialize the evaluation form."""
         self.rubric = rubric
@@ -114,6 +116,8 @@ class EvaluationForm:
         self.include_reasoning = include_reasoning
         self.enable_sync = enable_sync
         self.sync_interval = sync_interval
+        self.enable_items = enable_items
+        self.allow_skip = allow_skip
 
     def render(self) -> Form:
         """
@@ -844,3 +848,373 @@ class EvaluationForm:
         """
 
         return js_template
+
+    def render_with_item(self, item: Dict[str, Any], progress: Optional[Dict[str, Any]] = None) -> Form:
+        """
+        Render the evaluation form with an item display.
+
+        Parameters
+        ----------
+        item : Dict[str, Any]
+            Item to display with 'id', 'prompt', 'response' and optional 'metadata'.
+        progress : Optional[Dict[str, Any]]
+            Progress information from ItemsManager.
+
+        Returns
+        -------
+        Form
+            FastHTML Form component with item display and evaluation metrics.
+        """
+        components = []
+
+        # Add item display section
+        item_display = self._render_item_display(item)
+        components.append(item_display)
+
+        # Add navigation and progress
+        if progress:
+            nav_section = self._render_navigation(progress)
+            components.append(nav_section)
+
+        # Add evaluator name field and sync status if sync is enabled
+        if self.enable_sync:
+            evaluator_section = Div(
+                Div(
+                    Label("Evaluator Name (Optional):", cls="teval-label"),
+                    Input(
+                        type="text",
+                        id="evaluator-name",
+                        name="evaluator_name",
+                        placeholder="Your name or email (for tracking purposes)",
+                        cls="teval-input",
+                        onchange="saveEvaluatorName()"
+                    ),
+                    cls="teval-evaluator-section"
+                ),
+                Div(
+                    Span("Sync Status: ", cls="teval-sync-label"),
+                    Span("Not synced", id="sync-status", cls="teval-sync-status"),
+                    Span("", id="last-sync-time", cls="teval-sync-time"),
+                    cls="teval-sync-info"
+                ),
+                cls="teval-header-info"
+            )
+            components.append(evaluator_section)
+
+        # Add filter bar
+        filter_bar = self._create_filter_bar()
+        if filter_bar:
+            components.append(filter_bar)
+
+        # Add mandatory metrics section
+        if self.rubric.mandatory_metrics:
+            mandatory_section = self._render_metric_section(
+                self.rubric.mandatory_metrics,
+                "Mandatory Criteria",
+                "All must pass for evaluation to succeed"
+            )
+            components.append(mandatory_section)
+
+        # Add cumulative metrics section
+        if self.rubric.cumulative_metrics:
+            cumulative_section = self._render_metric_section(
+                self.rubric.cumulative_metrics,
+                "Quality Criteria",
+                f"Need {self.rubric.passing_score_threshold} of {len(self.rubric.cumulative_metrics)} to pass"
+            )
+            components.append(cumulative_section)
+
+        # Add progress indicator for metrics
+        metric_progress = Div(
+            Span(id="progress-text", cls="teval-progress-text"),
+            Progress(
+                id="progress-bar",
+                value="0",
+                max=str(len(self.rubric.metrics)),
+                cls="teval-progress"
+            ),
+            cls="teval-progress-container"
+        )
+        components.append(metric_progress)
+
+        # Add action buttons with item navigation
+        actions = self._render_actions_with_navigation(item.get("id"), progress)
+        components.append(actions)
+
+        # Add JavaScript for enhanced functionality
+        js_code = self._get_javascript_with_items(item, progress)
+        components.append(Script(js_code))
+
+        # Add hidden field for item_id
+        components.append(Input(type="hidden", name="item_id", value=item.get("id", "")))
+
+        return Form(
+            *components,
+            hx_post="/submit",
+            hx_target="#result",
+            cls="teval-form",
+            id="evaluation-form"
+        )
+
+    def _render_item_display(self, item: Dict[str, Any]) -> Div:
+        """
+        Render the item content display area.
+
+        Parameters
+        ----------
+        item : Dict[str, Any]
+            Item to display.
+
+        Returns
+        -------
+        Div
+            Item display component.
+        """
+        components = []
+
+        # Item header with ID
+        if item.get("id"):
+            components.append(
+                Div(
+                    Span(f"Item: {item['id']}", cls="teval-item-id"),
+                    cls="teval-item-header"
+                )
+            )
+
+        # Prompt section
+        if item.get("prompt"):
+            components.append(
+                Div(
+                    H2("Prompt", cls="teval-item-section-title"),
+                    Div(item["prompt"], cls="teval-item-content"),
+                    cls="teval-item-prompt"
+                )
+            )
+
+        # Response section
+        if item.get("response"):
+            components.append(
+                Div(
+                    H2("Response", cls="teval-item-section-title"),
+                    Div(item["response"], cls="teval-item-content"),
+                    cls="teval-item-response"
+                )
+            )
+
+        # Metadata section (if present)
+        if item.get("metadata"):
+            metadata_items = []
+            for key, value in item["metadata"].items():
+                metadata_items.append(
+                    Span(f"{key}: {value}", cls="teval-item-metadata-item")
+                )
+
+            components.append(
+                Div(
+                    Span("Metadata: ", cls="teval-item-metadata-label"),
+                    *metadata_items,
+                    cls="teval-item-metadata"
+                )
+            )
+
+        return Div(
+            *components,
+            cls="teval-item-display",
+            id="item-display"
+        )
+
+    def _render_navigation(self, progress: Dict[str, Any]) -> Div:
+        """
+        Render navigation controls and progress display.
+
+        Parameters
+        ----------
+        progress : Dict[str, Any]
+            Progress information from ItemsManager.
+
+        Returns
+        -------
+        Div
+            Navigation component.
+        """
+        completed = progress.get("completed", 0)
+        total = progress.get("total", 0)
+        percentage = progress.get("percentage", 0)
+        skipped = progress.get("skipped", 0)
+        skip_count = progress.get("skip_count", 0)
+        max_skips = progress.get("max_skips", 3)
+
+        return Div(
+            # Progress bar
+            Div(
+                Span(f"Item Progress: {completed}/{total} ({percentage:.0f}%)",
+                     cls="teval-item-progress-text"),
+                Progress(
+                    id="item-progress-bar",
+                    value=str(completed),
+                    max=str(total),
+                    cls="teval-item-progress-bar"
+                ),
+                cls="teval-item-progress"
+            ),
+            # Skip information
+            Div(
+                Span(f"Skips used: {skip_count}/{max_skips}",
+                     cls="teval-skip-info") if self.allow_skip else None,
+                Span(f" | Items skipped: {skipped}",
+                     cls="teval-skip-info") if self.allow_skip and skipped > 0 else None,
+                cls="teval-navigation-info"
+            ) if self.allow_skip else None,
+            cls="teval-navigation-section"
+        )
+
+    def _render_actions_with_navigation(self, item_id: str, progress: Optional[Dict] = None) -> Div:
+        """
+        Render action buttons with item navigation.
+
+        Parameters
+        ----------
+        item_id : str
+            Current item ID.
+        progress : Optional[Dict]
+            Progress information.
+
+        Returns
+        -------
+        Div
+            Actions component with navigation.
+        """
+        buttons = []
+
+        # Skip button (if allowed and not at limit)
+        if self.allow_skip and progress:
+            skip_count = progress.get("skip_count", 0)
+            max_skips = progress.get("max_skips", 3)
+            if skip_count < max_skips:
+                buttons.append(
+                    Button(
+                        "Skip Item",
+                        onclick="skipCurrentItem()",
+                        type="button",
+                        cls="teval-btn-warning",
+                        id="skip-btn"
+                    )
+                )
+
+        # Submit and Next button
+        buttons.append(
+            Button(
+                "Submit & Next",
+                type="submit",
+                cls="teval-btn-primary",
+                id="submit-btn"
+            )
+        )
+
+        # Export button
+        buttons.append(
+            Button(
+                "Export JSON",
+                onclick="exportResults()",
+                type="button",
+                cls="teval-btn-secondary"
+            )
+        )
+
+        # Auto-save toggle
+        buttons.append(
+            Button(
+                "Auto-save: ON",
+                id="autosave-toggle",
+                onclick="toggleAutosave()",
+                type="button",
+                cls="teval-btn-secondary teval-autosave-on"
+            )
+        )
+
+        return Div(
+            *buttons,
+            cls="teval-actions"
+        )
+
+    def _get_javascript_with_items(self, item: Dict[str, Any], progress: Optional[Dict] = None) -> str:
+        """Generate JavaScript code for form functionality with items."""
+        # Get base JavaScript
+        base_js = self._get_javascript()
+
+        # Add item-specific JavaScript
+        item_js = f"""
+        // Current item data
+        const CURRENT_ITEM = {json.dumps(item)};
+        const CURRENT_PROGRESS = {json.dumps(progress or {})};
+
+        // Skip item function
+        async function skipCurrentItem() {{
+            const skipCount = {progress.get('skip_count', 0) if progress else 0};
+            const maxSkips = {progress.get('max_skips', 3) if progress else 3};
+
+            if (skipCount >= maxSkips) {{
+                alert('Maximum skips reached for this session');
+                return;
+            }}
+
+            if (confirm('Skip this item and move to the next?')) {{
+                try {{
+                    const response = await fetch('/item/skip', {{
+                        method: 'POST',
+                        headers: {{'Content-Type': 'application/json'}},
+                        body: JSON.stringify({{
+                            item_id: CURRENT_ITEM.id,
+                            session_id: sessionId
+                        }})
+                    }});
+
+                    if (response.ok) {{
+                        // Reload page to get next item
+                        window.location.reload();
+                    }} else {{
+                        alert('Failed to skip item');
+                    }}
+                }} catch (error) {{
+                    console.error('Skip error:', error);
+                    alert('Error skipping item');
+                }}
+            }}
+        }}
+
+        // Override submit to include item_id
+        const originalCollectFormData = window.collectFormData;
+        window.collectFormData = function() {{
+            const data = originalCollectFormData ? originalCollectFormData() : {{}};
+            data.item_id = CURRENT_ITEM.id;
+            data.item_content = {{
+                prompt: CURRENT_ITEM.prompt,
+                response: CURRENT_ITEM.response
+            }};
+            return data;
+        }};
+
+        // Add keyboard shortcuts for navigation
+        document.addEventListener('keydown', (e) => {{
+            // Alt+S to skip
+            if (e.altKey && e.key === 's') {{
+                e.preventDefault();
+                const skipBtn = document.getElementById('skip-btn');
+                if (skipBtn && !skipBtn.disabled) {{
+                    skipCurrentItem();
+                }}
+            }}
+        }});
+
+        // Update progress display on load
+        document.addEventListener('DOMContentLoaded', () => {{
+            // Update item progress display
+            const progressText = `Item ${{CURRENT_PROGRESS.completed + 1}} of ${{CURRENT_PROGRESS.total}}`;
+            const itemProgressEl = document.querySelector('.teval-item-progress-text');
+            if (itemProgressEl && !itemProgressEl.textContent.includes('Item Progress:')) {{
+                itemProgressEl.textContent = progressText;
+            }}
+        }});
+        """
+
+        return base_js + "\n\n" + item_js
