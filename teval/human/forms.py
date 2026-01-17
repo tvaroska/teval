@@ -190,6 +190,21 @@ class EvaluationForm:
             )
             components.append(cumulative_section)
 
+        # Add global comment field (only when reasoning is enabled)
+        if self.include_reasoning:
+            global_comment_section = Div(
+                H2("Overall Comments", cls="teval-section-title"),
+                P("Additional feedback or observations about this evaluation (optional)", cls="teval-section-desc"),
+                Textarea(
+                    placeholder="Enter any overall comments or feedback...",
+                    name="global_comment",
+                    rows="4",
+                    cls="teval-global-comment"
+                ),
+                cls="teval-global-comment-section"
+            )
+            components.append(global_comment_section)
+
         # Add progress indicator
         progress = Div(
             Span(id="progress-text", cls="teval-progress-text"),
@@ -361,12 +376,29 @@ class EvaluationForm:
         ]
 
         if self.include_reasoning:
+            # Check if comment is required on failure
+            required_indicator = ""
+            if metric.requires_comment_on_fail:
+                required_indicator = Span(
+                    " (required if fails)",
+                    cls="teval-comment-required-indicator"
+                )
+
             components.append(
-                Textarea(
-                    placeholder="Reasoning (optional)...",
-                    name=f"{metric_id}_reasoning",
-                    rows="3",
-                    cls="teval-reasoning"
+                Div(
+                    Label(
+                        "Reasoning",
+                        required_indicator,
+                        cls="teval-reasoning-label"
+                    ) if metric.requires_comment_on_fail else None,
+                    Textarea(
+                        placeholder="Reasoning (required if fails)..." if metric.requires_comment_on_fail else "Reasoning (optional)...",
+                        name=f"{metric_id}_reasoning",
+                        rows="3",
+                        cls="teval-reasoning teval-reasoning-required" if metric.requires_comment_on_fail else "teval-reasoning",
+                        data_required_on_fail="true" if metric.requires_comment_on_fail else "false"
+                    ),
+                    cls="teval-reasoning-container"
                 )
             )
 
@@ -392,24 +424,34 @@ class EvaluationForm:
             - rubric_id: The rubric identifier
             - results: Dict of metric pass/fail values
             - reasoning: Dict of optional reasoning text
+            - global_comment: Overall evaluation comment
             - mandatory_pass: Whether all mandatory metrics passed
             - score: Number of passed cumulative metrics
             - total: Total number of cumulative metrics
             - passes: Overall pass/fail status
             - timestamp: ISO format timestamp
 
+        Raises
+        ------
+        ValueError
+            If required comments are missing for failed metrics.
+
         Examples
         --------
         >>> form_data = {
         ...     "M1": "true",
         ...     "C1": "false",
-        ...     "M1_reasoning": "Looks good"
+        ...     "M1_reasoning": "Looks good",
+        ...     "global_comment": "Overall good quality"
         ... }
         >>> results = form.process_submission(form_data)
         >>> print(results["results"])  # {"M1": True, "C1": False}
         """
         results = {}
         reasoning = {}
+
+        # Check for required comments on failed metrics
+        missing_required_comments = []
 
         for metric in self.rubric.metrics:
             mid = metric.id
@@ -419,6 +461,24 @@ class EvaluationForm:
                 reason_key = f"{mid}_reasoning"
                 if reason_key in form_data and form_data[reason_key]:
                     reasoning[mid] = form_data[reason_key]
+
+                # Validate required comments for failed metrics
+                if metric.requires_comment_on_fail and not results[mid]:
+                    comment = form_data.get(reason_key, "").strip()
+                    if not comment:
+                        missing_required_comments.append(mid)
+
+        # Raise error if required comments are missing (strict validation)
+        if missing_required_comments:
+            raise ValueError(
+                f"Required comments missing for failed metrics: {', '.join(missing_required_comments)}. "
+                "These metrics failed and require explanatory comments."
+            )
+
+        # Extract global comment
+        global_comment = form_data.get("global_comment", "").strip()
+        if not global_comment:
+            global_comment = None
 
         # Calculate scores
         mandatory_pass = all(
@@ -433,7 +493,7 @@ class EvaluationForm:
 
         passes = mandatory_pass and cumulative_score >= self.rubric.passing_score_threshold
 
-        return {
+        result_dict = {
             "rubric_id": self.rubric.rubric_id,
             "results": results,
             "reasoning": reasoning,
@@ -443,6 +503,12 @@ class EvaluationForm:
             "passes": passes,
             "timestamp": datetime.now().isoformat()
         }
+
+        # Include global comment if present
+        if global_comment:
+            result_dict["global_comment"] = global_comment
+
+        return result_dict
 
     def _get_javascript(self) -> str:
         """Generate JavaScript code for form functionality."""
@@ -512,6 +578,30 @@ class EvaluationForm:
             }};
         }}
 
+        function validateRequiredComments() {{
+            // Check if any failed metrics require comments
+            const cards = document.querySelectorAll('.teval-metric-card');
+            let missingComments = [];
+
+            cards.forEach(card => {{
+                const metricId = card.dataset.metricId;
+                const failRadio = card.querySelector('input[value="false"]:checked');
+                const textarea = card.querySelector('textarea[data-required-on-fail="true"]');
+
+                if (failRadio && textarea) {{
+                    const comment = textarea.value.trim();
+                    if (!comment) {{
+                        missingComments.push(metricId);
+                        textarea.classList.add('teval-error');
+                    }} else {{
+                        textarea.classList.remove('teval-error');
+                    }}
+                }}
+            }});
+
+            return missingComments;
+        }}
+
         function updateProgress() {{
             const total = document.querySelectorAll('.teval-metric-card').length;
             const completed = document.querySelectorAll('.teval-metric-card input:checked').length;
@@ -524,10 +614,13 @@ class EvaluationForm:
                 progressText.textContent = 'Progress: ' + completed + '/' + total + ' metrics completed';
             }}
 
-            // Enable submit button when all metrics are complete
+            // Validate required comments
+            const missingComments = validateRequiredComments();
+
+            // Enable submit button when all metrics are complete and required comments are filled
             const submitBtn = document.getElementById('submit-btn');
             if (submitBtn) {{
-                submitBtn.disabled = completed < total;
+                submitBtn.disabled = completed < total || missingComments.length > 0;
             }}
 
             // Auto-save on change if enabled

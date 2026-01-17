@@ -140,7 +140,8 @@ app = create_evaluation_app_with_storage(
 ```
 
 #### S0-FE-3: Free-form Comments Support
-**Status**: TODO
+**Status**: ✅ COMPLETED (2026-01-17)
+**Plan**: `/home/boris/.claude/plans/quizzical-weaving-parasol.md`
 **Files**: `teval/metrics.py`, `teval/human/forms.py`, `tests/test_comments.py`
 **Requirements**:
 - Add optional comment field for each metric evaluation

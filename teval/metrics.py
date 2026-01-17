@@ -84,6 +84,7 @@ class MetricDefinition(BaseModel):
     id: str = Field(..., description="Unique identifier for the metric (e.g., 'M1', 'code_style_pass')")
     rubric: str = Field(..., description="The specific pass/fail criterion, acting as the rubric for this metric.")
     mandatory: bool = Field(default=False, description="If True, this metric must pass for the evaluation to pass.")
+    requires_comment_on_fail: bool = Field(default=False, description="If True, a comment is required when this metric fails.")
 
     @field_validator('id')
     @classmethod
@@ -279,6 +280,95 @@ class EvaluationRubric(BaseModel):
             )
         return threshold
 
+    @classmethod
+    def create_discovery_rubric(
+        cls,
+        rubric_id: str,
+        criteria: Dict[str, str],
+        passing_score_threshold: Optional[int] = None
+    ) -> "EvaluationRubric":
+        """
+        Create a discovery rubric with simple OK/Not OK criteria and mandatory comments.
+
+        This builder pattern creates rubrics designed for initial exploration and
+        understanding of evaluation needs. Each criterion becomes a metric that
+        requires a comment when it fails, helping gather feedback for rubric refinement.
+
+        Parameters
+        ----------
+        rubric_id : str
+            Unique identifier for this discovery rubric.
+        criteria : Dict[str, str]
+            Dictionary mapping criterion IDs to their descriptions.
+            Example: {"safety": "Is the response safe?", "accuracy": "Is it accurate?"}
+        passing_score_threshold : Optional[int]
+            Minimum number of criteria that must pass. If None, defaults to
+            len(criteria) (all must pass).
+
+        Returns
+        -------
+        EvaluationRubric
+            A rubric configured for discovery with mandatory comments on failures.
+
+        Examples
+        --------
+        Create a simple discovery rubric:
+
+        >>> rubric = EvaluationRubric.create_discovery_rubric(
+        ...     rubric_id="discovery_v1",
+        ...     criteria={
+        ...         "safety": "Is the response safe and appropriate?",
+        ...         "accuracy": "Is the information accurate?",
+        ...         "helpfulness": "Is the response helpful to the user?"
+        ...     },
+        ...     passing_score_threshold=2  # 2 of 3 must pass
+        ... )
+
+        Create a minimal OK/Not OK rubric:
+
+        >>> simple_rubric = EvaluationRubric.create_discovery_rubric(
+        ...     rubric_id="quick_check",
+        ...     criteria={"overall": "Is this response acceptable for production?"}
+        ... )
+
+        Notes
+        -----
+        Discovery rubrics are ideal for:
+        - Initial evaluation before formal rubric design
+        - Gathering qualitative feedback from subject matter experts
+        - Understanding what aspects matter for evaluation
+        - Building consensus on evaluation criteria
+
+        The comments collected can be analyzed to:
+        - Extract common failure patterns
+        - Identify missing evaluation criteria
+        - Refine rubric definitions
+        - Understand edge cases
+        """
+        if not criteria:
+            raise ValueError("At least one criterion must be provided")
+
+        # Create metrics with requires_comment_on_fail=True
+        metrics = []
+        for criterion_id, rubric_text in criteria.items():
+            metric = MetricDefinition(
+                id=criterion_id,
+                rubric=rubric_text,
+                mandatory=False,  # Use cumulative scoring for flexibility
+                requires_comment_on_fail=True
+            )
+            metrics.append(metric)
+
+        # Default threshold: all must pass
+        if passing_score_threshold is None:
+            passing_score_threshold = len(metrics)
+
+        return cls(
+            rubric_id=rubric_id,
+            metrics=metrics,
+            passing_score_threshold=passing_score_threshold
+        )
+
     @field_validator('metrics')
     @classmethod
     def validate_metrics_list(cls, metrics: List[MetricDefinition]) -> List[MetricDefinition]:
@@ -472,11 +562,18 @@ class EvaluationRubric(BaseModel):
             }
             required.append(metric.id)
 
-            # Optional reasoning field
-            properties[f"{metric.id}_reasoning"] = {
+            # Optional reasoning field (becomes required if metric requires comment on fail)
+            reasoning_field = {
                 "type": "string",
                 "description": f"Explanation for the {metric.id} evaluation"
             }
+            properties[f"{metric.id}_reasoning"] = reasoning_field
+
+        # Add global comment field (always optional)
+        properties["global_comment"] = {
+            "type": "string",
+            "description": "Overall comment or feedback about the evaluation"
+        }
 
         schema = {
             "type": "object",
@@ -550,11 +647,17 @@ class EvaluationRubric(BaseModel):
                 Field(..., description=f"Does this pass the criterion: {metric.rubric}")
             )
 
-            # Optional reasoning field
+            # Optional reasoning field (but may be required by validation)
             field_definitions[f"{metric.id}_reasoning"] = (
                 Optional[str],
                 Field(None, description=f"Explanation for the {metric.id} evaluation")
             )
+
+        # Add global comment field (always optional)
+        field_definitions["global_comment"] = (
+            Optional[str],
+            Field(None, description="Overall comment or feedback about the evaluation")
+        )
 
         # Store reference to rubric for use in methods
         rubric_ref = self
@@ -563,6 +666,12 @@ class EvaluationRubric(BaseModel):
         def passes(model_self) -> bool:
             """Returns True if the evaluation passes all requirements."""
             result_dict = {metric.id: getattr(model_self, metric.id) for metric in rubric_ref.metrics}
+            # Include reasoning values for comment validation
+            for metric in rubric_ref.metrics:
+                reasoning_key = f"{metric.id}_reasoning"
+                reasoning_value = getattr(model_self, reasoning_key, None)
+                if reasoning_value is not None:
+                    result_dict[reasoning_key] = reasoning_value
             return rubric_ref.validate_result(result_dict)
 
         def get_failed_metrics(model_self) -> List[str]:
@@ -687,6 +796,23 @@ class EvaluationRubric(BaseModel):
                     f"Invalid result for metric '{metric.id}': expected boolean, got {type(value).__name__}. "
                     f"Metric rubric: '{metric_def.rubric[:50]}{'...' if len(metric_def.rubric) > 50 else ''}'"
                 )
+
+        # Check for required comments when metrics fail
+        missing_required_comments = []
+        for metric in self.metrics:
+            if metric.requires_comment_on_fail and not result[metric.id]:
+                # Metric failed and requires a comment
+                comment_key = f"{metric.id}_reasoning"
+                comment = result.get(comment_key, "").strip() if isinstance(result.get(comment_key), str) else ""
+                if not comment:
+                    missing_required_comments.append((metric.id, metric.rubric))
+
+        if missing_required_comments:
+            error_parts = ["Missing required comments for failed metrics:"]
+            for metric_id, rubric in missing_required_comments:
+                error_parts.append(f"  - {metric_id}: '{rubric[:50]}{'...' if len(rubric) > 50 else ''}'")
+            error_parts.append("These metrics failed and require explanatory comments.")
+            raise ValueError('\n'.join(error_parts))
 
         # Check mandatory metrics
         for metric in self.mandatory_metrics:
