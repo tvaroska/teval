@@ -57,7 +57,195 @@
 - ✅ Add maximum limits for metric counts (100 total, 20 mandatory)
 - ✅ Better error messages with context
 
-## Sprint 1: Human-LLM Alignment
+#### S0-FE-1: Add File-Based Storage with Auto-Sync
+**Status**: ✅ COMPLETED (2026-01-16)
+**Plan**: `/home/boris/.claude/plans/drifting-knitting-truffle.md`
+**Files**: `teval/human/app.py`, `teval/human/sync_storage.py`, `tests/test_sync_storage.py`
+**Requirements**:
+- Enhance human evaluation app with optional server-side file storage
+- No database required - JSON files on filesystem
+- Automatic periodic sync from client localStorage to server
+- Single integrated API: `create_evaluation_app_with_storage()`
+- Configurable sync intervals (default 30 seconds)
+- Data integrity via checksums
+- Session recovery after browser crashes
+- Timestamped backups for audit trail
+**API Design**:
+```python
+app = create_evaluation_app_with_storage(
+    rubric=my_rubric,
+    title="My Evaluation",
+    storage_dir="./evaluations",  # Optional, enables storage
+    sync_interval=30,  # seconds
+    enable_sync=True  # Can disable for client-only mode
+)
+```
+**Benefits**:
+- Zero infrastructure setup (no database)
+- Dual storage (client + server) for resilience
+- Works offline with automatic sync when online
+- Direct JSON access for analysis
+- Backwards compatible (storage is optional)
+
+#### S0-FE-2: Evaluation Items Management
+**Status**: TODO
+**Files**: `teval/human/app.py`, `teval/human/items.py`, `tests/test_items.py`
+**Requirements**:
+- Display prompt + response pairs for evaluation
+- Item queue management (sequential, random, or assigned)
+- Track which items each evaluator has completed
+- Associate evaluations with specific item IDs
+- Support multiple item sources (list, file, API, generator)
+- Progress tracking (e.g., "Item 23 of 100")
+- Skip/flag difficult items functionality
+**UI Components**:
+- Item display area (prompt, response, context)
+- Navigation controls (previous, next, skip)
+- Progress indicator
+- Item metadata display (model, timestamp, etc.)
+**API Design**:
+```python
+app = create_evaluation_app_with_storage(
+    rubric=my_rubric,
+    evaluation_items=[  # Items to evaluate
+        {
+            "id": "item_001",
+            "prompt": "User question here",
+            "response": "LLM response here",
+            "metadata": {...}  # Optional context
+        }
+    ],
+    assignment_mode="sequential",  # or "random", "round_robin"
+    items_per_evaluator=None,  # Limit items per person
+    allow_skip=True  # Can skip difficult items
+)
+```
+**Data Structure**:
+```json
+{
+    "item_id": "item_001",
+    "evaluator_id": "alice@example.com",
+    "session_id": "session_123",
+    "timestamp": "2024-01-15T10:30:00Z",
+    "evaluation": {
+        "metric_1": true,
+        "metric_2": false
+    },
+    "item_content": {
+        "prompt": "...",
+        "response": "..."
+    }
+}
+```
+
+#### S0-FE-3: Free-form Comments Support
+**Status**: TODO
+**Files**: `teval/metrics.py`, `teval/human/forms.py`, `tests/test_comments.py`
+**Requirements**:
+- Add optional comment field for each metric evaluation
+- Support global comment for entire evaluation
+- Enable "OK/Not OK + Comment" simple rubric for initial discovery
+- Store comments in evaluation results
+- Export comments for rubric refinement analysis
+**Use Cases**:
+1. **Discovery Mode**: Start with binary OK/Not OK + mandatory comments to understand what matters
+2. **Refinement Mode**: Capture reasoning for metric failures
+3. **Edge Case Documentation**: Note unusual situations
+**API Enhancement**:
+```python
+# Simple discovery rubric
+discovery_rubric = EvaluationRubric(
+    rubric_id="discovery_v1",
+    metrics=[
+        MetricDefinition(
+            id="overall_quality",
+            rubric="Is this response acceptable for production use?",
+            requires_comment_on_fail=True  # Force comment when marking False
+        )
+    ],
+    passing_score_threshold=1
+)
+
+# Evaluation result with comments
+{
+    "overall_quality": false,
+    "overall_quality_comment": "Response contains PII and gives medical advice",
+    "global_comment": "This response has multiple issues that need addressing"
+}
+```
+
+#### S0-ALIGN-1: Rubric Discovery from SME Feedback
+**Status**: TODO
+**Files**: `teval/rubric_discovery.py`, `tests/test_discovery.py`
+**Requirements**:
+- Analyze free-form comments to extract common themes
+- Identify patterns in OK/Not OK decisions
+- Generate suggested metrics from comment patterns
+- Cluster similar feedback across evaluators
+- Export rubric recommendations
+**Workflow**:
+1. Start with simple OK/Not OK + comments
+2. Collect 50-100 evaluations from SMEs
+3. Extract patterns from comments
+4. Generate structured rubric proposal
+5. Validate with SMEs
+**Example Analysis**:
+```python
+# Input: Comments from Not OK evaluations
+comments = [
+    "Contains customer email address",
+    "Shows user's full name and account",
+    "Exposes SSN in response",
+    "Gives specific medical advice",
+    "Recommends medication dosage"
+]
+
+# Output: Suggested metrics
+suggested_metrics = [
+    {
+        "id": "no_pii",
+        "pattern": "PII exposure (email, name, SSN)",
+        "frequency": 45,
+        "suggested_rubric": "Response must not expose PII"
+    },
+    {
+        "id": "no_medical",
+        "pattern": "Medical advice",
+        "frequency": 23,
+        "suggested_rubric": "Response must not give medical advice"
+    }
+]
+```
+
+#### S0-ALIGN-2: Human-LLM Alignment Analysis
+**Status**: TODO
+**Files**: `teval/alignment.py`, `tests/test_alignment.py`
+**Requirements**:
+- Calculate inter-rater reliability (Cohen's Kappa, Fleiss' Kappa)
+- Measure human-LLM alignment rates per metric
+- Generate disagreement analysis reports
+- Identify systematic bias patterns
+- Confidence scoring based on alignment levels
+**Metrics**:
+- Human-Human Agreement: κ > 0.7 (substantial agreement)
+- Human-LLM Alignment: > 80% agreement rate
+- Per-metric confidence scores
+**API**:
+```python
+from teval.alignment import AlignmentAnalyzer
+
+analyzer = AlignmentAnalyzer()
+results = analyzer.analyze(
+    human_evaluations=[...],
+    llm_evaluations=[...]
+)
+
+print(f"Human agreement: {results.human_kappa:.2f}")
+print(f"Human-LLM alignment: {results.alignment_rate:.1%}")
+print(f"Problem metrics: {results.low_alignment_metrics}")
+```
+
+## Sprint 1: Evaluation Scale & Pipeline
 
 ### Human Evaluation Collection System
 
@@ -106,19 +294,9 @@ results, report = import_evaluations(json_data, rubric)
 print(f"Imported {report.success_count}/{report.total_count} evaluations")
 ```
 
-#### S1-BE-1: Inter-rater Reliability Metrics
-**Status**: TODO
-**Files**: `teval/metrics.py`, `teval/statistics.py`
-**Metrics**: Cohen's Kappa, Fleiss' Kappa, Krippendorff's Alpha
-
-#### S1-BE-2: Alignment Statistical Analysis
-**Status**: TODO
-**Files**: `teval/statistics.py`
-**Features**: Confidence intervals, hypothesis testing, bootstrap sampling
-
 ### Multi-stage Evaluation Pipeline
 
-#### S1-BE-3: Pipeline Architecture
+#### S1-BE-1: Pipeline Architecture
 **Status**: TODO
 **Files**: `teval/pipeline.py`
 **Requirements**:
@@ -127,7 +305,7 @@ print(f"Imported {report.success_count}/{report.total_count} evaluations")
 - Data passing between stages
 - Stop-on-fail support
 
-#### S1-BE-4: Pipeline Configuration
+#### S1-BE-2: Pipeline Configuration
 **Status**: TODO
 **Files**: `teval/pipeline.py`
 **Features**: YAML/JSON config, versioning, dry-run mode
@@ -195,6 +373,7 @@ passes = rubric.validate_result(response)
 - SQL/NoSQL storage backends
 
 ### Advanced Analytics
+- Inter-rater Reliability Metrics (Cohen's Kappa, Fleiss' Kappa, Krippendorff's Alpha)
 - Evaluation trend analysis
 - A/B testing framework
 - Cost-quality trade-offs

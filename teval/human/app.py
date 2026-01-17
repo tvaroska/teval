@@ -21,13 +21,16 @@ except ImportError:
 from teval.metrics import EvaluationRubric
 from teval.human.forms import EvaluationForm
 from teval.human.styles import get_styles
+from teval.human.sync_storage import FileBasedStorage, create_sync_endpoints
 
 
 def create_evaluation_app(
     rubric: EvaluationRubric,
     title: Optional[str] = None,
     storage_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
-    port: int = 5000
+    port: int = 5000,
+    enable_sync: bool = False,
+    sync_interval: int = 30
 ) -> FastHTML:
     """
     Create a FastHTML app for human evaluation collection.
@@ -124,7 +127,12 @@ def create_evaluation_app(
         )
     )
 
-    form = EvaluationForm(rubric, title=app_title)
+    form = EvaluationForm(
+        rubric,
+        title=app_title,
+        enable_sync=enable_sync,
+        sync_interval=sync_interval
+    )
 
     @app.route("/")
     def index():
@@ -185,5 +193,144 @@ def create_evaluation_app(
                        cls="teval-btn-primary"),
                 cls="teval-result teval-error"
             )
+
+    return app
+
+
+def create_evaluation_app_with_storage(
+    rubric: EvaluationRubric,
+    title: Optional[str] = None,
+    storage_dir: Optional[str] = None,
+    sync_interval: int = 30,
+    enable_sync: bool = True,
+    storage_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    port: int = 5000
+) -> FastHTML:
+    """
+    Create a FastHTML app with file-based storage and auto-sync.
+
+    Creates a web application for collecting human evaluations with optional
+    server-side file storage and automatic synchronization from browser localStorage.
+    When storage_dir is provided, enables dual storage (client + server) for resilience.
+
+    Parameters
+    ----------
+    rubric : EvaluationRubric
+        The evaluation rubric defining metrics and passing criteria.
+    title : str, optional
+        Custom title for the application. Defaults to "Evaluation: {rubric_id}".
+    storage_dir : str, optional
+        Directory for file-based storage. When provided, enables server-side storage
+        with automatic sync. If None, only uses browser localStorage.
+    sync_interval : int, default=30
+        Seconds between automatic syncs to server (when storage_dir is provided).
+    enable_sync : bool, default=True
+        Whether to enable automatic sync. Can be set to False for client-only mode
+        even when storage_dir is provided.
+    storage_callback : Callable[[Dict[str, Any]], None], optional
+        Additional callback for custom storage/processing of evaluation results.
+    port : int, default=5000
+        Port number for the web server when using serve().
+
+    Returns
+    -------
+    FastHTML
+        Configured FastHTML application with storage capabilities.
+
+    Raises
+    ------
+    ImportError
+        If FastHTML is not installed.
+    ValueError
+        If rubric has no metrics defined.
+
+    Examples
+    --------
+    Create app with file storage and auto-sync:
+
+    >>> from teval import EvaluationRubric, MetricDefinition
+    >>> from teval.human import create_evaluation_app_with_storage
+    >>>
+    >>> rubric = EvaluationRubric(
+    ...     rubric_id="code_review",
+    ...     metrics=[
+    ...         MetricDefinition(id="M1", rubric="No errors", mandatory=True),
+    ...         MetricDefinition(id="C1", rubric="Well documented")
+    ...     ],
+    ...     passing_score_threshold=1
+    ... )
+    >>>
+    >>> # With file storage enabled
+    >>> app = create_evaluation_app_with_storage(
+    ...     rubric,
+    ...     title="Code Review",
+    ...     storage_dir="./evaluations",  # Enables file storage
+    ...     sync_interval=30               # Auto-sync every 30 seconds
+    ... )
+    >>> # serve(app)  # Starts at http://localhost:5000
+
+    Create app without file storage (client-only):
+
+    >>> app = create_evaluation_app_with_storage(
+    ...     rubric,
+    ...     title="Code Review"
+    ...     # No storage_dir = client-only mode with localStorage
+    ... )
+
+    Notes
+    -----
+    Multi-User Support:
+    - Each browser/device gets a unique session ID stored in localStorage
+    - Sessions are isolated - evaluators cannot see each other's work
+    - Optional evaluator name/email for tracking (no authentication)
+    - Admin can generate aggregate reports across all sessions
+
+    Storage Features:
+    - Dual storage: browser localStorage + server files (when enabled)
+    - Automatic sync at configured intervals
+    - Session recovery after browser crashes
+    - Timestamped backups for audit trail
+    - Data integrity via checksums
+    - Direct JSON file access for analysis
+
+    File Structure (when storage_dir is provided):
+    ```
+    storage_dir/
+    ├── sessions/
+    │   ├── session_abc123/         # Each user's session
+    │   │   ├── latest.json         # Current evaluation state
+    │   │   └── eval_TIMESTAMP.json # Timestamped backups
+    │   └── ...
+    ├── archive/                     # Old sessions
+    └── reports/                     # Aggregate reports
+    ```
+
+    The app remains fully functional without storage_dir, using only
+    browser localStorage. This maintains backward compatibility while
+    adding optional server-side persistence.
+
+    See Also
+    --------
+    create_evaluation_app : Basic app without file storage
+    FileBasedStorage : Storage backend implementation
+    EvaluationRubric : Core rubric model from teval
+    """
+    # Determine if sync should be enabled
+    sync_enabled = storage_dir is not None and enable_sync
+
+    # Create base app with sync settings
+    app = create_evaluation_app(
+        rubric=rubric,
+        title=title,
+        storage_callback=storage_callback,
+        port=port,
+        enable_sync=sync_enabled,
+        sync_interval=sync_interval
+    )
+
+    # If storage_dir provided, add file storage and sync endpoints
+    if storage_dir:
+        storage = FileBasedStorage(storage_dir)
+        app = create_sync_endpoints(app, storage, rubric)
 
     return app

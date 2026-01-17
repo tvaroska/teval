@@ -104,12 +104,16 @@ class EvaluationForm:
         self,
         rubric: EvaluationRubric,
         title: Optional[str] = None,
-        include_reasoning: bool = True
+        include_reasoning: bool = True,
+        enable_sync: bool = False,
+        sync_interval: int = 30
     ):
         """Initialize the evaluation form."""
         self.rubric = rubric
         self.title = title or f"Evaluation: {rubric.rubric_id}"
         self.include_reasoning = include_reasoning
+        self.enable_sync = enable_sync
+        self.sync_interval = sync_interval
 
     def render(self) -> Form:
         """
@@ -133,6 +137,31 @@ class EvaluationForm:
         using HTMX for seamless interaction.
         """
         components = []
+
+        # Add evaluator name field and sync status if sync is enabled
+        if self.enable_sync:
+            evaluator_section = Div(
+                Div(
+                    Label("Evaluator Name (Optional):", cls="teval-label"),
+                    Input(
+                        type="text",
+                        id="evaluator-name",
+                        name="evaluator_name",
+                        placeholder="Your name or email (for tracking purposes)",
+                        cls="teval-input",
+                        onchange="saveEvaluatorName()"
+                    ),
+                    cls="teval-evaluator-section"
+                ),
+                Div(
+                    Span("Sync Status: ", cls="teval-sync-label"),
+                    Span("Not synced", id="sync-status", cls="teval-sync-status"),
+                    Span("", id="last-sync-time", cls="teval-sync-time"),
+                    cls="teval-sync-info"
+                ),
+                cls="teval-header-info"
+            )
+            components.append(evaluator_section)
 
         # Add filter bar
         filter_bar = self._create_filter_bar()
@@ -423,6 +452,8 @@ class EvaluationForm:
         const MANDATORY_METRICS = {json.dumps(mandatory_ids)};
         const CUMULATIVE_METRICS = {json.dumps(cumulative_ids)};
         const PASSING_THRESHOLD = {self.rubric.passing_score_threshold};
+        const ENABLE_SYNC = {'true' if self.enable_sync else 'false'};
+        const SYNC_INTERVAL = {self.sync_interval * 1000};  // Convert to milliseconds
 
         // Auto-save functionality
         let autosaveEnabled = true;
@@ -553,8 +584,194 @@ class EvaluationForm:
             }});
         }}
 
+        // Session and sync management
+        let sessionId = null;
+        let syncTimer = null;
+        let lastSyncTime = null;
+        let syncRetryCount = 0;
+        const MAX_RETRY = 3;
+
+        function generateSessionId() {{
+            // Try crypto API first, fallback to timestamp-based ID
+            if (window.crypto && window.crypto.randomUUID) {{
+                return crypto.randomUUID();
+            }} else {{
+                return 'session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+            }}
+        }}
+
+        function getOrCreateSessionId() {{
+            let storedId = localStorage.getItem('teval_session_id');
+            if (!storedId) {{
+                storedId = generateSessionId();
+                localStorage.setItem('teval_session_id', storedId);
+            }}
+            return storedId;
+        }}
+
+        function saveEvaluatorName() {{
+            const nameInput = document.getElementById('evaluator-name');
+            if (nameInput) {{
+                localStorage.setItem('teval_evaluator_name', nameInput.value);
+            }}
+        }}
+
+        function loadEvaluatorName() {{
+            const nameInput = document.getElementById('evaluator-name');
+            const savedName = localStorage.getItem('teval_evaluator_name');
+            if (nameInput && savedName) {{
+                nameInput.value = savedName;
+            }}
+        }}
+
+        async function syncToServer() {{
+            if (!ENABLE_SYNC) return;
+
+            const formData = collectFormData();
+            if (!formData) return;
+
+            const evaluatorName = document.getElementById('evaluator-name')?.value || 'anonymous';
+
+            const syncData = {{
+                session_id: sessionId,
+                evaluation: formData,
+                metadata: {{
+                    evaluator: evaluatorName,
+                    rubric_id: RUBRIC_ID,
+                    client_timestamp: new Date().toISOString()
+                }}
+            }};
+
+            try {{
+                const response = await fetch('/api/sync', {{
+                    method: 'POST',
+                    headers: {{
+                        'Content-Type': 'application/json'
+                    }},
+                    body: JSON.stringify(syncData)
+                }});
+
+                if (response.ok) {{
+                    const result = await response.json();
+                    updateSyncStatus('success');
+                    lastSyncTime = new Date();
+                    syncRetryCount = 0;
+                    return result;
+                }} else {{
+                    throw new Error('Sync failed: ' + response.status);
+                }}
+            }} catch (error) {{
+                console.error('Sync error:', error);
+                syncRetryCount++;
+
+                if (syncRetryCount < MAX_RETRY) {{
+                    // Retry with exponential backoff
+                    setTimeout(() => syncToServer(), Math.pow(2, syncRetryCount) * 1000);
+                    updateSyncStatus('retrying');
+                }} else {{
+                    updateSyncStatus('error');
+                    syncRetryCount = 0;
+                }}
+            }}
+        }}
+
+        function updateSyncStatus(status) {{
+            const statusEl = document.getElementById('sync-status');
+            const timeEl = document.getElementById('last-sync-time');
+
+            if (!statusEl) return;
+
+            switch(status) {{
+                case 'success':
+                    statusEl.textContent = '✅ Synced';
+                    statusEl.className = 'teval-sync-status teval-sync-success';
+                    if (timeEl && lastSyncTime) {{
+                        timeEl.textContent = ' (Last: ' + lastSyncTime.toLocaleTimeString() + ')';
+                    }}
+                    break;
+                case 'syncing':
+                    statusEl.textContent = '🔄 Syncing...';
+                    statusEl.className = 'teval-sync-status teval-sync-syncing';
+                    break;
+                case 'retrying':
+                    statusEl.textContent = '⚠️ Retrying...';
+                    statusEl.className = 'teval-sync-status teval-sync-warning';
+                    break;
+                case 'error':
+                    statusEl.textContent = '❌ Sync failed';
+                    statusEl.className = 'teval-sync-status teval-sync-error';
+                    break;
+                default:
+                    statusEl.textContent = 'Not synced';
+                    statusEl.className = 'teval-sync-status';
+            }}
+        }}
+
+        function startSyncTimer() {{
+            if (!ENABLE_SYNC) return;
+
+            if (syncTimer) clearInterval(syncTimer);
+
+            // Initial sync
+            syncToServer();
+
+            // Set up periodic sync
+            syncTimer = setInterval(() => {{
+                syncToServer();
+            }}, SYNC_INTERVAL);
+        }}
+
+        function stopSyncTimer() {{
+            if (syncTimer) {{
+                clearInterval(syncTimer);
+                syncTimer = null;
+            }}
+        }}
+
+        async function recoverSession() {{
+            if (!ENABLE_SYNC || !sessionId) return;
+
+            try {{
+                const response = await fetch('/api/recover/' + sessionId);
+                const result = await response.json();
+
+                if (result.status === 'found' && result.data) {{
+                    // Restore evaluation data
+                    const data = result.data.evaluation;
+                    if (data && data.results) {{
+                        const form = document.getElementById('evaluation-form');
+                        if (form) {{
+                            // Restore metric values
+                            for (const [metricId, value] of Object.entries(data.results)) {{
+                                const radio = form.querySelector('input[name="' + metricId + '"][value="' + value + '"]');
+                                if (radio) radio.checked = true;
+                            }}
+                            // Restore reasoning
+                            if (data.reasoning) {{
+                                for (const [metricId, text] of Object.entries(data.reasoning)) {{
+                                    const textarea = form.querySelector('textarea[name="' + metricId + '_reasoning"]');
+                                    if (textarea) textarea.value = text;
+                                }}
+                            }}
+                        }}
+                        updateProgress();
+                        updateSyncStatus('success');
+                        return true;
+                    }}
+                }}
+            }} catch (error) {{
+                console.error('Recovery error:', error);
+            }}
+            return false;
+        }}
+
         // Initialize on load
         document.addEventListener('DOMContentLoaded', () => {{
+            // Initialize session
+            sessionId = getOrCreateSessionId();
+
+            // Load evaluator name if saved
+            loadEvaluatorName();
             // Load draft if exists
             const draft = localStorage.getItem('teval_' + RUBRIC_ID + '_draft');
             if (draft) {{
@@ -579,6 +796,21 @@ class EvaluationForm:
                 }} catch (e) {{
                     console.error('Failed to restore draft:', e);
                 }}
+            }}
+
+            // Try to recover session from server first if sync is enabled
+            if (ENABLE_SYNC) {{
+                recoverSession().then((recovered) => {{
+                    if (!recovered) {{
+                        // If no server recovery, try local draft
+                        const localDraft = localStorage.getItem('teval_' + RUBRIC_ID + '_draft');
+                        if (localDraft) {{
+                            // ... existing draft recovery code ...
+                        }}
+                    }}
+                    // Start sync timer after recovery attempt
+                    startSyncTimer();
+                }});
             }}
 
             // Start autosave
