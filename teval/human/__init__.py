@@ -60,7 +60,7 @@ follows WCAG guidelines for contrast and keyboard navigation.
 """
 
 try:
-    from teval.human.app import create_evaluation_app, create_evaluation_app_with_storage
+    from teval.human.app import create_evaluation_app
     from teval.human.forms import EvaluationForm
     from teval.human.importers import (
         import_evaluations,
@@ -76,7 +76,6 @@ try:
 
     __all__ = [
         "create_evaluation_app",
-        "create_evaluation_app_with_storage",
         "EvaluationForm",
         "import_evaluations",
         "ImportReport",

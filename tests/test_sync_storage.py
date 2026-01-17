@@ -18,7 +18,7 @@ import os
 pytest.importorskip("fasthtml")
 
 from teval import EvaluationRubric, MetricDefinition
-from teval.human import create_evaluation_app_with_storage, FileBasedStorage
+from teval.human import create_evaluation_app, FileBasedStorage
 from teval.human.sync_storage import create_sync_endpoints
 
 
@@ -230,13 +230,13 @@ class TestFileBasedStorage:
         assert "last_updated" in index[session_id]
 
 
-class TestCreateEvaluationAppWithStorage:
-    """Test the create_evaluation_app_with_storage function."""
+class TestCreateEvaluationApp:
+    """Test the create_evaluation_app function with storage features."""
 
     def test_app_creation_without_storage(self):
         """Test app creation without storage directory (client-only mode)."""
         rubric = create_test_rubric()
-        app = create_evaluation_app_with_storage(rubric, title="Test App")
+        app = create_evaluation_app(rubric, title="Test App")
 
         assert app is not None
         assert hasattr(app, 'routes')
@@ -246,7 +246,7 @@ class TestCreateEvaluationAppWithStorage:
         rubric = create_test_rubric()
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            app = create_evaluation_app_with_storage(
+            app = create_evaluation_app(
                 rubric,
                 title="Test App",
                 storage_dir=temp_dir,
@@ -263,7 +263,7 @@ class TestCreateEvaluationAppWithStorage:
         rubric = create_test_rubric()
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            app = create_evaluation_app_with_storage(
+            app = create_evaluation_app(
                 rubric,
                 title="Test App",
                 storage_dir=temp_dir,
@@ -282,7 +282,7 @@ class TestCreateEvaluationAppWithStorage:
         def custom_callback(data):
             callback_data.append(data)
 
-        app = create_evaluation_app_with_storage(
+        app = create_evaluation_app(
             rubric,
             storage_callback=custom_callback
         )
@@ -530,7 +530,7 @@ class TestIntegration:
             )
 
             # Create app with storage
-            app = create_evaluation_app_with_storage(
+            app = create_evaluation_app(
                 rubric,
                 title="Integration Test",
                 storage_dir=temp_dir,
