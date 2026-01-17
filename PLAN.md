@@ -177,7 +177,8 @@ discovery_rubric = EvaluationRubric(
 ```
 
 #### S0-ALIGN-1: Rubric Discovery from SME Feedback
-**Status**: TODO
+**Status**: ✅ COMPLETED (2026-01-17)
+**Plan**: `/home/boris/.claude/plans/virtual-leaping-candy.md`
 **Files**: `teval/rubric_discovery.py`, `tests/test_discovery.py`
 **Requirements**:
 - Analyze free-form comments to extract common themes
